@@ -5,14 +5,33 @@ from torch.utils.data import DataLoader
 import torch
 import yaml
 from tqdm import tqdm
+import wandb
+import numpy as np
 
 import warnings
 warnings.filterwarnings('ignore', message='Lazy modules.*')
 warnings.filterwarnings('ignore', message='Plan failed with a cudnnException: CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR.*') # https://github.com/pytorch/pytorch/issues/121834
 
+# fix random seeds for reproducibility
+SEED = 456
+torch.manual_seed(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+np.random.seed(SEED)
+
+from dotenv import load_dotenv
+load_dotenv()
+
+
 if __name__ == "__main__":
     with open('config.yaml', 'r') as file:
         cfg = yaml.safe_load(file)
+    wandb.init(
+        project='neural_foundation',
+        config=cfg,
+        # mode='disabled'
+    )
+    
     device = torch.device('cuda')
     
     dataset = EEGDataset(**cfg['data'])
@@ -44,8 +63,16 @@ if __name__ == "__main__":
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
-            # pbar.set_description(f"Loss: {loss.item():.5f}")
+            pbar.set_description(f"loss: {loss.item():.5f}")
+            wandb.log({
+                'step_loss': loss.item()
+            })
             # bench_loss_previous = ((encoder_res[:, 1:, :] - encoder_res[:, :-1, :]) ** 2).mean()
             # bench_loss_average = ((encoder_res[:, 1:, :] - encoder_res[:, :-1, :].cumsum(1) ) ** 2).mean()
-            pbar.set_description(f"loss: {loss.item():.5f}")
+            
         print(f"Epoch {epoch_num:>3} average loss {sum(losses) / len(losses):.5f}")
+        wandb.log({
+            'epoch_loss': sum(losses) / len(losses)
+        })
+
+wandb.finish()

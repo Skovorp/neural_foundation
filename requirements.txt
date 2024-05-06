@@ -10,3 +10,4 @@ notebook
 h5py
 transformers
 fastparquet
+python-dotenv
