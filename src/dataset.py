@@ -3,11 +3,11 @@ from torch import nn
 from torch.utils.data import Dataset
 from pathlib import Path
 import pandas as pd
-from utils import load_recording, turn_into_patches
+from utils import load_recording, turn_into_patches, plot_spec
 
 
 class EEGDataset(Dataset):
-    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, **kwargs):
+    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window, **kwargs):
         super().__init__()
         self.data_dir = Path(data_path)
         self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet')
@@ -16,21 +16,59 @@ class EEGDataset(Dataset):
         self.chunk_length = chunk_length
         self.chunk_stride = chunk_stride
         self.num_chunks = num_chunks
+        self.pin_window = pin_window
     
     def __len__(self,):
         return len(self.needed_filenames)
     
-    def pick_tokens(self, chunked):
-        assert chunked.shape[0] >= self.num_chunks, f"Not enough tokens in sample. Need {self.num_chunks}, have only {chunked.shape[0]}"
-        start = torch.randint(low=0, high=chunked.shape[0] - self.num_chunks, size=(1,))[0]
-        return chunked[start : start + self.num_chunks, :, :]
-    
-    def __getitem__(self, index):
-        data, timestamps, meta = load_recording(self.data_dir / self.needed_filenames[index])
-        data = torch.tensor(data)
-        data = turn_into_patches(data, self.chunk_length, self.chunk_stride)
-        data = self.pick_tokens(data)
+    def process_data(self, data):
         return data
+    
+    # def pick_tokens(self, chunked):
+    #     if not self.pin_window:
+    #         assert chunked.shape[0] >= self.num_chunks, f"Not enough tokens in sample. Need {self.num_chunks}, have only {chunked.shape[0]}"
+    #         start = torch.randint(low=0, high=chunked.shape[0] - self.num_chunks, size=(1,))[0]
+    #         return chunked[start : start + self.num_chunks, :, :]
+    #     else:
+    #         return chunked[100 : 100 + self.num_chunks, :, :]
+    
+    def chunked_length(self):
+        return (self.num_chunks - 1) * self.chunk_stride + self.chunk_length
+    
+    def pick_chunked(self, data):
+        chunked_length = self.chunked_length()
+        if self.pin_window:
+            start = data.shape[1] // 2
+        else:
+            assert data.shape[1] >= chunked_length, f"Not enough points in sample. Need {chunked_length}, have only {data.shape[1]}"
+            start = torch.randint(low=0, high=data.shape[1] - chunked_length + 1, size=(1,))[0]
+        return data[:, start : start + chunked_length]
+
+
+    def __getitem__(self, index):
+        raw_data, timestamps, meta = load_recording(self.data_dir / self.needed_filenames[index])
+        raw_data = torch.tensor(raw_data)
+        raw_data = self.pick_chunked(raw_data)
+        
+        proc_data = self.process_data(raw_data)
+        
+        chunked_data = turn_into_patches(proc_data, self.chunk_length, self.chunk_stride)
+        assert chunked_data.shape[0] == self.num_chunks, f"sample should have {self.num_chunks}, got {chunked_data.shape[0]}"
+        return {
+            'raw_data': raw_data,
+            'processed_data': proc_data,
+            'chunked_data': chunked_data
+        }
         
     
     
+def collate_fn(elements):
+    res = {'data': []}
+    
+    for el in elements:
+        res['data'].append(el['chunked_data'])
+    res['data'] = torch.stack(res['data'])
+    
+    res['sample_raw_spec'] = plot_spec(elements[0]['raw_data'])
+    res['sample_processed_spec'] = plot_spec(elements[0]['processed_data'])
+    return res

@@ -1,10 +1,11 @@
 data:
   data_path: /home/ubuntu/small_data/small_data
-  limit: 100
+  limit: 8
   chunk_length: 500
   chunk_stride: 50
   num_chunks: 64
   batch_size: 8
+  pin_window: true
 encoder:
   n_filters_time: 128
   filter_time_length: 20 
@@ -12,8 +13,9 @@ encoder:
   stride_avg_pool: 20
   drop_prob: 0.2
   outp_dim: 768
+  transformer_num_layers: 6
 optimizer:
   lr: 3.0e-4
   weight_decay: 1.0e-2
 training:
-  num_epochs: 5
+  num_epochs: 1000

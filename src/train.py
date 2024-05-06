@@ -1,5 +1,6 @@
-from dataset import EEGDataset
+from dataset import EEGDataset, collate_fn
 from model import Encoder, Decoder
+from utils import benchmark_previous, benchmark_best_constant, benchmark_cumsum
 
 from torch.utils.data import DataLoader
 import torch
@@ -29,33 +30,35 @@ if __name__ == "__main__":
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        # mode='disabled'
+        mode='disabled'
     )
     
     device = torch.device('cuda')
     
     dataset = EEGDataset(**cfg['data'])
-    print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0].shape}")
+    print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0]['chunked_data'].shape}")
     
-    loader = DataLoader(dataset, cfg['data']['batch_size'], drop_last=True)
-    sample_batch = next(iter(loader))
+    loader = DataLoader(dataset, cfg['data']['batch_size'], shuffle=False, drop_last=True, collate_fn=collate_fn)
+    sample_batch = next(iter(loader))['data']
     print("Shape of sample batch:", sample_batch.shape)
     
     
     encoder = Encoder(**cfg['encoder']).to(device)
     decoder = Decoder().to(device)
+    print(f"Encoder:\n{encoder}")
+    print(f"\nDecoder:\n{decoder}")
     
     optimizer = torch.optim.Adam(
         list(encoder.parameters()) + list(decoder.parameters()),
         **cfg['optimizer']
     )
     
-    losses = []
     for epoch_num in range(1, cfg['training']['num_epochs'] + 1):
         pbar = tqdm(loader)
+        losses = []
         for batch in pbar:
             optimizer.zero_grad()
-            batch = batch.to(device)
+            batch = batch['data'].to(device)
             
             encoder_res = encoder(batch)
             res = decoder(encoder_res)
@@ -63,12 +66,18 @@ if __name__ == "__main__":
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
-            pbar.set_description(f"loss: {loss.item():.5f}")
+            
+            bench_previous_loss = benchmark_previous(encoder_res)
+            bench_best_constant_loss = benchmark_best_constant(encoder_res)
+            bench_cumsum_loss = benchmark_cumsum(encoder_res)      
+            
+            pbar.set_description(f"loss: {loss.item():.5f} bench loss: {bench_best_constant_loss:.5f}")      
             wandb.log({
-                'step_loss': loss.item()
+                'step_loss': loss.item(),
+                'bench_previous_loss': bench_previous_loss,
+                'bench_best_constant_loss': bench_best_constant_loss,
+                'bench_cumsum_loss': bench_cumsum_loss
             })
-            # bench_loss_previous = ((encoder_res[:, 1:, :] - encoder_res[:, :-1, :]) ** 2).mean()
-            # bench_loss_average = ((encoder_res[:, 1:, :] - encoder_res[:, :-1, :].cumsum(1) ) ** 2).mean()
             
         print(f"Epoch {epoch_num:>3} average loss {sum(losses) / len(losses):.5f}")
         wandb.log({
