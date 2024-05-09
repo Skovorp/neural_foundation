@@ -37,7 +37,7 @@ class Encoder(BaseModel):
         )
         self.outp_proj = nn.LazyLinear(outp_dim)
         transformer_layer = nn.TransformerEncoderLayer(d_model=n_filters_time, dim_feedforward=512, nhead=8, norm_first=True)
-        self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers)
+        self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers, enable_nested_tensor=False)
     
         
     def forward(self, x):

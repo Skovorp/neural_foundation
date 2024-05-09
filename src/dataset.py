@@ -5,9 +5,11 @@ from pathlib import Path
 import pandas as pd
 from utils import load_recording, turn_into_patches, plot_spec
 
+from torchaudio.functional import highpass_biquad, bandreject_biquad
+
 
 class EEGDataset(Dataset):
-    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window, **kwargs):
+    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window, buffer_length, **kwargs):
         super().__init__()
         self.data_dir = Path(data_path)
         self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet')
@@ -17,11 +19,16 @@ class EEGDataset(Dataset):
         self.chunk_stride = chunk_stride
         self.num_chunks = num_chunks
         self.pin_window = pin_window
+        self.buffer_length = buffer_length
     
     def __len__(self,):
         return len(self.needed_filenames)
     
     def process_data(self, data):
+        data = highpass_biquad(data, 250, 1)
+        data = bandreject_biquad(data, 250, 50)
+        data = bandreject_biquad(data, 250, 100)
+        data = data[:, self.buffer_length:]
         return data
     
     # def pick_tokens(self, chunked):
@@ -33,7 +40,7 @@ class EEGDataset(Dataset):
     #         return chunked[100 : 100 + self.num_chunks, :, :]
     
     def chunked_length(self):
-        return (self.num_chunks - 1) * self.chunk_stride + self.chunk_length
+        return (self.num_chunks - 1) * self.chunk_stride + self.chunk_length + self.buffer_length
     
     def pick_chunked(self, data):
         chunked_length = self.chunked_length()
@@ -69,6 +76,6 @@ def collate_fn(elements):
         res['data'].append(el['chunked_data'])
     res['data'] = torch.stack(res['data'])
     
-    res['sample_raw_spec'] = plot_spec(elements[0]['raw_data'])
-    res['sample_processed_spec'] = plot_spec(elements[0]['processed_data'])
+    res['sample_raw'] = elements[0]['raw_data'][0]
+    res['sample_processed'] = elements[0]['processed_data'][0]
     return res

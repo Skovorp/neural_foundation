@@ -3,6 +3,11 @@ import h5py
 import numpy as np
 from torch import nn
 import torch
+from torch import stft
+import matplotlib.pyplot as plt 
+from matplotlib.colors import LogNorm
+import PIL
+
 
 def load_recording(path_to_h5):
     """
@@ -30,7 +35,7 @@ def load_recording(path_to_h5):
 def turn_into_patches(data, chunk_length, chunk_stride):
     """Cuts tensor into chunks along time dimention. (4, long) -> (~long / chunk_stride, 4, chunk_length)"""
     # maybe change to torch.tensor_split, torch.chunk
-    assert len(data.shape) == 2 and data.shape[0] == 4, f'expected 2d tensor of shape (4, *), got {data.shape}'
+    assert_2d_4channels(data)
     data_prep = data.unsqueeze(0).unsqueeze(3) # (1, 4, long, 1)
     chunked = nn.functional.unfold(data_prep, kernel_size=(chunk_length, 1), stride=(chunk_stride, 1)) # (1, 4 * chunk_length, ~long // chunk_stride)
     assert len(chunked.shape) == 3 and chunked.shape[0] == 1 and chunked.shape[1] == 4 * chunk_length, f'expected (1, 4 * chunk_length, ~long // chunk_stride) got {chunked.shape}'
@@ -40,8 +45,46 @@ def turn_into_patches(data, chunk_length, chunk_stride):
     return chunked
 
 
-def plot_spec(data):
-    return None
+def plot_spec(data, n_fft=250, hop_length=125):
+    """Input: 1d torch tensor. Assumes 250hz sampling frequency. Returns PIL.Image"""
+    assert len(data.shape) == 1, f"expected 1d input, got shape: {data.shape}"
+    spec = stft(data, n_fft=n_fft, window=torch.hann_window(n_fft), hop_length=hop_length, center=False, return_complex=True)
+    spec = torch.view_as_real(spec)
+    spec = torch.sqrt((spec * spec).sum(2))
+    
+    freqs = torch.linspace(0, data.shape[0]/250, spec.shape[1])
+    times = torch.linspace(0, 125, spec.shape[0])
+    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    c = ax.pcolor(freqs, times, spec, shading='auto',
+               norm=LogNorm(vmin=max(spec.min().item(), 1e-9), vmax=max(spec.max().item(), 1e-9)))
+    fig.colorbar(c, ax=ax)
+    
+    ax.set_ylabel('Frequency [Hz]')
+    ax.set_xlabel('Time [sec]')
+    fig.canvas.draw()
+    res = PIL.Image.frombytes('RGB', fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+    plt.close()
+    return res
+
+
+def plot_first_n(data, n=1000):
+    """Input: 1d torch tensor. Assumes 250hz sampling frequency. Returns PIL.Image"""
+    assert len(data.shape) == 1, f"expected 1d input, got shape: {data.shape}"
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    n = min(n, data.shape[0])
+    data = data[:n]
+    times = torch.arange(n) / 250
+    ax.plot(times, data)
+    
+    ax.set_ylabel('Data')
+    ax.set_xlabel('Time [sec]')
+    fig.canvas.draw()
+    res = PIL.Image.frombytes('RGB', fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+    plt.close()
+    return res
+    
 
 def benchmark_previous(encoder_res):
     """Loss is calculated as MSE(encoder_res[:, 1:, :], smt). 
@@ -70,3 +113,7 @@ def benchmark_cumsum(encoder_res):
         pred = pred / (torch.arange(pred.shape[1], device=encoder_res.device) + 1).reshape(1, -1, 1)
         pred = pred[:, :-1, :]
         return ((target - pred) ** 2).mean().item()
+
+def assert_2d_4channels(data):
+    assert len(data.shape) == 2 and data.shape[0] == 4, f'expected 2d tensor of shape (4, *), got {data.shape}' 
+    

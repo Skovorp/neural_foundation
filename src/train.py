@@ -1,6 +1,7 @@
 from dataset import EEGDataset, collate_fn
 from model import Encoder, Decoder
 from utils import benchmark_previous, benchmark_best_constant, benchmark_cumsum
+from utils import plot_spec, plot_first_n
 
 from torch.utils.data import DataLoader
 import torch
@@ -30,7 +31,7 @@ if __name__ == "__main__":
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        mode='disabled'
+        # mode='disabled'
     )
     
     device = torch.device('cuda')
@@ -39,8 +40,9 @@ if __name__ == "__main__":
     print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0]['chunked_data'].shape}")
     
     loader = DataLoader(dataset, cfg['data']['batch_size'], shuffle=False, drop_last=True, collate_fn=collate_fn)
-    sample_batch = next(iter(loader))['data']
-    print("Shape of sample batch:", sample_batch.shape)
+    sample_batch = next(iter(loader))
+    print("Shape of sample batch:", sample_batch['data'].shape)
+    print(f"Total length of segment: {sample_batch['sample_raw'].shape[0] / 250:.2f}s")
     
     
     encoder = Encoder(**cfg['encoder']).to(device)
@@ -58,9 +60,9 @@ if __name__ == "__main__":
         losses = []
         for batch in pbar:
             optimizer.zero_grad()
-            batch = batch['data'].to(device)
+            data = batch['data'].to(device)
             
-            encoder_res = encoder(batch)
+            encoder_res = encoder(data)
             res = decoder(encoder_res)
             loss = ((encoder_res[:, 1:, :] - res[:, :-1, :]) ** 2).mean()
             loss.backward()
@@ -77,6 +79,12 @@ if __name__ == "__main__":
                 'bench_previous_loss': bench_previous_loss,
                 'bench_best_constant_loss': bench_best_constant_loss,
                 'bench_cumsum_loss': bench_cumsum_loss
+            })
+            wandb.log({
+                'sample_raw_spec': wandb.Image(plot_spec(batch['sample_raw'])),
+                'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
+                'sample_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'])),
+                'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
             })
             
         print(f"Epoch {epoch_num:>3} average loss {sum(losses) / len(losses):.5f}")

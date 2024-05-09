@@ -2,10 +2,11 @@ data:
   data_path: /home/ubuntu/small_data/small_data
   limit: 8
   chunk_length: 500
-  chunk_stride: 50
+  chunk_stride: 450
   num_chunks: 64
   batch_size: 8
   pin_window: true
+  buffer_length: 500 # 250 is enough, but to be sure
 encoder:
   n_filters_time: 128
   filter_time_length: 20 
