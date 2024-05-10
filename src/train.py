@@ -4,6 +4,7 @@ from utils import benchmark_previous, benchmark_best_constant, benchmark_cumsum
 from utils import plot_spec, plot_first_n
 
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import SequentialLR, LinearLR
 import torch
 import yaml
 from tqdm import tqdm
@@ -55,6 +56,10 @@ if __name__ == "__main__":
         **cfg['optimizer']
     )
     
+    warmup_scheduler = LinearLR(optimizer, start_factor=1e-5, end_factor=1, total_iters=cfg['scheduler']['warmup_steps'])
+    other_scheduler = LinearLR(optimizer, start_factor=1, end_factor=1e-5, total_iters=cfg['scheduler']['total_steps'] - cfg['scheduler']['warmup_steps'])
+    scheduler = SequentialLR(optimizer, [warmup_scheduler, other_scheduler], milestones=[cfg['scheduler']['warmup_steps']])
+    
     for epoch_num in range(1, cfg['training']['num_epochs'] + 1):
         pbar = tqdm(loader)
         losses = []
@@ -67,29 +72,34 @@ if __name__ == "__main__":
             loss = ((encoder_res[:, 1:, :] - res[:, :-1, :]) ** 2).mean()
             loss.backward()
             optimizer.step()
+            scheduler.step()
             losses.append(loss.item())
             
             bench_previous_loss = benchmark_previous(encoder_res)
             bench_best_constant_loss = benchmark_best_constant(encoder_res)
             bench_cumsum_loss = benchmark_cumsum(encoder_res)      
             
-            pbar.set_description(f"loss: {loss.item():.5f} bench loss: {bench_best_constant_loss:.5f}")      
+            pbar.set_description(f"loss: {loss.item():.5f} bench loss: {bench_best_constant_loss:.5f}")   
             wandb.log({
                 'step_loss': loss.item(),
                 'bench_previous_loss': bench_previous_loss,
                 'bench_best_constant_loss': bench_best_constant_loss,
-                'bench_cumsum_loss': bench_cumsum_loss
+                'bench_cumsum_loss': bench_cumsum_loss,
+                'lr': scheduler.get_last_lr()[0],
+                'encoder_mean': encoder_res.mean(),
+                'encoder_sq_mean': (encoder_res ** 2).mean(),
+                'encoder_hist': wandb.Histogram(encoder_res.detach().cpu().numpy(), num_bins=512)
             })
-            wandb.log({
-                'sample_raw_spec': wandb.Image(plot_spec(batch['sample_raw'])),
-                'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
-                'sample_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'])),
-                'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
-            })
+            # wandb.log({
+            #     'sample_raw_spec': wandb.Image(plot_spec(batch['sample_raw'])),
+            #     'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
+            #     'sample_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'])),
+            #     'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
+            # })
             
         print(f"Epoch {epoch_num:>3} average loss {sum(losses) / len(losses):.5f}")
         wandb.log({
             'epoch_loss': sum(losses) / len(losses)
-        })
+        }, commit=False)
 
 wandb.finish()

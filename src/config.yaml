@@ -3,20 +3,26 @@ data:
   limit: 8
   chunk_length: 500
   chunk_stride: 450
-  num_chunks: 64
+  num_chunks: 16
   batch_size: 8
   pin_window: true
   buffer_length: 500 # 250 is enough, but to be sure
 encoder:
-  n_filters_time: 128
-  filter_time_length: 20 
-  pool_time_length: 40
-  stride_avg_pool: 20
-  drop_prob: 0.2
+  n_filters_time: 40
+  filter_time_length: 25
+  pool_time_length: 75
+  stride_avg_pool: 15
+  drop_prob: 0.5
   outp_dim: 768
   transformer_num_layers: 6
+  transformer_dropout: 0.5
+  transformer_nhead: 10
+  transformer_dim_feedforward: 160 # n_filters_time * 4
 optimizer:
-  lr: 3.0e-4
-  weight_decay: 1.0e-2
+  lr: 1.0e-4
+  weight_decay: 1.0e-1
+scheduler:
+  warmup_steps: 600
+  total_steps: 60000
 training:
   num_epochs: 1000

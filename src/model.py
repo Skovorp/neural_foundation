@@ -20,14 +20,15 @@ class BaseModel(nn.Module):
 
 
 class Encoder(BaseModel):
-    def __init__(self, n_filters_time, filter_time_length, pool_time_length, stride_avg_pool, drop_prob, outp_dim, transformer_num_layers, **kwargs):
+    def __init__(self, n_filters_time, filter_time_length, pool_time_length, stride_avg_pool, drop_prob, 
+                 outp_dim, transformer_num_layers, transformer_dropout, transformer_nhead, transformer_dim_feedforward, **kwargs):
         super().__init__()
         self.n_filters_time = n_filters_time
         self.conv_stack = nn.Sequential(
             nn.Conv2d(1, n_filters_time, kernel_size=(1, filter_time_length)),
             nn.Conv2d(n_filters_time, n_filters_time, kernel_size=(4, 1)),
             nn.BatchNorm2d(num_features=n_filters_time),
-            nn.GELU(),
+            nn.ELU(),
             nn.AvgPool2d(
                 kernel_size=(1, pool_time_length),
                 stride=(1, stride_avg_pool)
@@ -36,7 +37,12 @@ class Encoder(BaseModel):
             nn.Conv2d(n_filters_time, n_filters_time, kernel_size=(1, 1), stride=(1, 1))
         )
         self.outp_proj = nn.LazyLinear(outp_dim)
-        transformer_layer = nn.TransformerEncoderLayer(d_model=n_filters_time, dim_feedforward=512, nhead=8, norm_first=True)
+        transformer_layer = nn.TransformerEncoderLayer(
+            d_model=n_filters_time, 
+            dim_feedforward=transformer_dim_feedforward, 
+            nhead=transformer_nhead, 
+            dropout=transformer_dropout,
+            norm_first=True)
         self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers, enable_nested_tensor=False)
     
         
@@ -58,7 +64,7 @@ class Decoder(BaseModel):
     def __init__(self):
         super().__init__()
         
-        configuration = GPT2Config(vocab_size=1, n_positions=1024)
+        configuration = GPT2Config(vocab_size=1, n_positions=1024, n_layer=1)
         self.gpt = GPT2Model(configuration) # (batch, seq_len, emb_dim) -> (batch, seq_len, emb_dim)
     
     def forward(self, x):
