@@ -117,3 +117,11 @@ def benchmark_cumsum(encoder_res):
 def assert_2d_4channels(data):
     assert len(data.shape) == 2 and data.shape[0] == 4, f'expected 2d tensor of shape (4, *), got {data.shape}' 
     
+    
+def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length):
+    mask = 1 * (torch.rand(batch_size, num_chunks) < mask_prob)
+    # print("orig mask ", mask.tolist())
+    mask[:, mask_length:] = mask[:, mask_length:] - mask[:, : -mask_length]
+    # print("added_mask", mask.tolist())
+    mask = mask.cumsum(1) > 0
+    return mask

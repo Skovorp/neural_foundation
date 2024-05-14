@@ -68,4 +68,9 @@ class Decoder(BaseModel):
         self.gpt = GPT2Model(configuration) # (batch, seq_len, emb_dim) -> (batch, seq_len, emb_dim)
     
     def forward(self, x):
-        return self.gpt.forward(inputs_embeds=x, return_dict=True).last_hidden_state
+        return self.gpt.forward(inputs_embeds=x, return_dict=True).last_hidden_state\
+            
+
+# encoder_res = encoder(data)
+# res = decoder(encoder_res)
+# loss = ((encoder_res[:, 1:, :] - res[:, :-1, :]) ** 2).mean()

@@ -1,5 +1,5 @@
 from dataset import EEGDataset, collate_fn
-from model import Encoder, Decoder
+from models.bendr import Encoder, ContextNetwork
 from utils import benchmark_previous, benchmark_best_constant, benchmark_cumsum
 from utils import plot_spec, plot_first_n
 
@@ -14,6 +14,7 @@ import numpy as np
 import warnings
 warnings.filterwarnings('ignore', message='Lazy modules.*')
 warnings.filterwarnings('ignore', message='Plan failed with a cudnnException: CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR.*') # https://github.com/pytorch/pytorch/issues/121834
+warnings.filterwarnings('ignore', message='.*The epoch parameter in `scheduler.step().*')
 
 # fix random seeds for reproducibility
 SEED = 456
@@ -27,12 +28,12 @@ load_dotenv()
 
 
 if __name__ == "__main__":
-    with open('config.yaml', 'r') as file:
+    with open('configs/config_bendr.yaml', 'r') as file:
         cfg = yaml.safe_load(file)
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        # mode='disabled'
+        mode='disabled'
     )
     
     device = torch.device('cuda')
@@ -47,12 +48,13 @@ if __name__ == "__main__":
     
     
     encoder = Encoder(**cfg['encoder']).to(device)
-    decoder = Decoder().to(device)
+    context_network = ContextNetwork(**cfg['context_network']).to(device)
     print(f"Encoder:\n{encoder}")
-    print(f"\nDecoder:\n{decoder}")
+    print(f"\ContextNetwork:\n{context_network}")
+    print(f"% tokens masked every batch: {100 * context_network.avg_part_masked(sample_batch['data']):.2f}%")
     
     optimizer = torch.optim.Adam(
-        list(encoder.parameters()) + list(decoder.parameters()),
+        list(encoder.parameters()) + list(context_network.parameters()),
         **cfg['optimizer']
     )
     
@@ -68,8 +70,9 @@ if __name__ == "__main__":
             data = batch['data'].to(device)
             
             encoder_res = encoder(data)
-            res = decoder(encoder_res)
-            loss = ((encoder_res[:, 1:, :] - res[:, :-1, :]) ** 2).mean()
+            res = context_network(encoder_res)
+            loss = ((encoder_res - res) ** 2).mean()
+            
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -79,7 +82,7 @@ if __name__ == "__main__":
             bench_best_constant_loss = benchmark_best_constant(encoder_res)
             bench_cumsum_loss = benchmark_cumsum(encoder_res)      
             
-            pbar.set_description(f"loss: {loss.item():.5f} bench loss: {bench_best_constant_loss:.5f}")   
+            pbar.set_description(f"loss: {loss.item():.5f}")   # bench loss: {bench_best_constant_loss:.5f}
             wandb.log({
                 'step_loss': loss.item(),
                 'bench_previous_loss': bench_previous_loss,
