@@ -1,7 +1,7 @@
 from dataset import EEGDataset, collate_fn
-from models.bendr import Encoder, ContextNetwork
-from utils import benchmark_previous, benchmark_best_constant, benchmark_cumsum
-from utils import plot_spec, plot_first_n
+from models.bendr import Encoder, ContextNetwork, calc_loss
+from utils.training_utils import benchmark_previous, benchmark_best_constant, benchmark_cumsum
+from utils.data_utils import plot_spec, plot_first_n
 
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import SequentialLR, LinearLR
@@ -67,31 +67,31 @@ if __name__ == "__main__":
         losses = []
         for batch in pbar:
             optimizer.zero_grad()
-            data = batch['data'].to(device)
+            batch['data'] = batch['data'].to(device)
             
-            encoder_res = encoder(data)
-            res = context_network(encoder_res)
-            loss = ((encoder_res - res) ** 2).mean()
+            batch = encoder(batch)
+            batch = context_network(batch)
+            loss = calc_loss(batch)
             
             loss.backward()
             optimizer.step()
             scheduler.step()
             losses.append(loss.item())
             
-            bench_previous_loss = benchmark_previous(encoder_res)
-            bench_best_constant_loss = benchmark_best_constant(encoder_res)
-            bench_cumsum_loss = benchmark_cumsum(encoder_res)      
+            bench_previous_loss = benchmark_previous(batch['encoder_features'])
+            bench_best_constant_loss = benchmark_best_constant(batch['encoder_features'])
+            bench_cumsum_loss = benchmark_cumsum(batch['encoder_features'])      
             
-            pbar.set_description(f"loss: {loss.item():.5f}")   # bench loss: {bench_best_constant_loss:.5f}
+            pbar.set_description(f"loss: {loss.item():.5f} bench loss: {bench_best_constant_loss:.5f}")   # 
             wandb.log({
                 'step_loss': loss.item(),
                 'bench_previous_loss': bench_previous_loss,
                 'bench_best_constant_loss': bench_best_constant_loss,
                 'bench_cumsum_loss': bench_cumsum_loss,
                 'lr': scheduler.get_last_lr()[0],
-                'encoder_mean': encoder_res.mean(),
-                'encoder_sq_mean': (encoder_res ** 2).mean(),
-                'encoder_hist': wandb.Histogram(encoder_res.detach().cpu().numpy(), num_bins=512)
+                'encoder_mean': batch['encoder_features'].mean(),
+                'encoder_sq_mean': (batch['encoder_features'] ** 2).mean(),
+                'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512)
             })
             # wandb.log({
             #     'sample_raw_spec': wandb.Image(plot_spec(batch['sample_raw'])),

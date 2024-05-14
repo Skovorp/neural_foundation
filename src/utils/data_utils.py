@@ -9,6 +9,7 @@ from matplotlib.colors import LogNorm
 import PIL
 
 
+
 def load_recording(path_to_h5):
     """
     Returns: 
@@ -35,7 +36,7 @@ def load_recording(path_to_h5):
 def turn_into_patches(data, chunk_length, chunk_stride):
     """Cuts tensor into chunks along time dimention. (4, long) -> (~long / chunk_stride, 4, chunk_length)"""
     # maybe change to torch.tensor_split, torch.chunk
-    assert_2d_4channels(data)
+    assert len(data.shape) == 2 and data.shape[0] == 4, f'expected 2d tensor of shape (4, *), got {data.shape}' 
     data_prep = data.unsqueeze(0).unsqueeze(3) # (1, 4, long, 1)
     chunked = nn.functional.unfold(data_prep, kernel_size=(chunk_length, 1), stride=(chunk_stride, 1)) # (1, 4 * chunk_length, ~long // chunk_stride)
     assert len(chunked.shape) == 3 and chunked.shape[0] == 1 and chunked.shape[1] == 4 * chunk_length, f'expected (1, 4 * chunk_length, ~long // chunk_stride) got {chunked.shape}'
@@ -84,44 +85,3 @@ def plot_first_n(data, n=1000):
     res = PIL.Image.frombytes('RGB', fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
     plt.close()
     return res
-    
-
-def benchmark_previous(encoder_res):
-    """Loss is calculated as MSE(encoder_res[:, 1:, :], smt). 
-    encoder_res shape is (batch_size, num_tokens, emb_dim)
-    lets predict current embedding for next embedding"""
-    with torch.no_grad():
-        return ((encoder_res[:, 1:, :] - encoder_res[:, :-1, :]) ** 2).mean().item()
-
-
-def benchmark_best_constant(encoder_res):
-    """Loss is calculated as MSE(encoder_res[:, 1:, :], smt). 
-    encoder_res shape is (batch_size, num_tokens, emb_dim)
-    lets predict mean of embedding for each embedding"""
-    with torch.no_grad():
-        target = encoder_res[:, 1:, :]
-        pred = target.mean(1, keepdims=True)
-        return ((target - pred) ** 2).mean().item()
-
-def benchmark_cumsum(encoder_res):
-    """Loss is calculated as MSE(encoder_res[:, 1:, :], smt). 
-    encoder_res shape is (batch_size, num_tokens, emb_dim)
-    lets predict mean of all previous embeddings for each embedding"""
-    with torch.no_grad():
-        target = encoder_res[:, 1:, :]
-        pred = encoder_res.cumsum(1)
-        pred = pred / (torch.arange(pred.shape[1], device=encoder_res.device) + 1).reshape(1, -1, 1)
-        pred = pred[:, :-1, :]
-        return ((target - pred) ** 2).mean().item()
-
-def assert_2d_4channels(data):
-    assert len(data.shape) == 2 and data.shape[0] == 4, f'expected 2d tensor of shape (4, *), got {data.shape}' 
-    
-    
-def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length):
-    mask = 1 * (torch.rand(batch_size, num_chunks) < mask_prob)
-    # print("orig mask ", mask.tolist())
-    mask[:, mask_length:] = mask[:, mask_length:] - mask[:, : -mask_length]
-    # print("added_mask", mask.tolist())
-    mask = mask.cumsum(1) > 0
-    return mask

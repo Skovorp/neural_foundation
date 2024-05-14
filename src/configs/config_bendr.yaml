@@ -3,9 +3,9 @@ data:
   limit: 8
   chunk_length: 500
   chunk_stride: 450
-  num_chunks: 16
+  num_chunks: 128
   batch_size: 8
-  pin_window: true
+  pin_window: false
   buffer_length: 500 # 250 is enough, but to be sure
 encoder:
   inp_size: 2000 # 4 * 500
@@ -21,7 +21,7 @@ optimizer:
   lr: 1.0e-4
   weight_decay: 1.0e-1
 scheduler:
-  warmup_steps: 5
-  total_steps: 60000
+  warmup_steps: 50
+  total_steps: 1000
 training:
   num_epochs: 1000

@@ -3,7 +3,7 @@ from torch import nn
 from torch.utils.data import Dataset
 from pathlib import Path
 import pandas as pd
-from utils import load_recording, turn_into_patches, plot_spec
+from utils.data_utils import load_recording, turn_into_patches, plot_spec
 
 from torchaudio.functional import highpass_biquad, bandreject_biquad
 
