@@ -1,11 +1,11 @@
 data:
   data_path: /home/ubuntu/small_data/small_data
-  limit: 8
+  limit: 1
   chunk_length: 500
   chunk_stride: 450
-  num_chunks: 128
-  batch_size: 8
-  pin_window: false
+  num_chunks: 8
+  batch_size: 1
+  pin_window: true
   buffer_length: 500 # 250 is enough, but to be sure
 encoder:
   inp_size: 2000 # 4 * 500
@@ -15,10 +15,10 @@ context_network:
   ffn_dim: 3072
   nhead: 8
   transformer_num_layers: 4
-  mask_prob: 0.065
-  mask_length: 10
+  mask_prob: 0.5
+  mask_length: 1
 optimizer:
-  lr: 1.0e-4
+  lr: 5.0e-4
   weight_decay: 1.0e-1
 scheduler:
   warmup_steps: 50

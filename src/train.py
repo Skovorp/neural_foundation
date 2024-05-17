@@ -68,6 +68,7 @@ if __name__ == "__main__":
         for batch in pbar:
             optimizer.zero_grad()
             batch['data'] = batch['data'].to(device)
+            print(batch['data'].mean())
             
             batch = encoder(batch)
             batch = context_network(batch)

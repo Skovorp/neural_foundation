@@ -3,9 +3,10 @@ from torch import nn
 import torch.nn.functional as F
 import numpy as np
 from utils.training_utils import make_pretrain_mask
+from models.neural_gpt import BaseModel
 
 
-class Encoder(nn.Module):
+class Encoder(BaseModel):
     def __init__(self, inp_size, emb_dim, **kwargs):
         super().__init__()
         self.proj = nn.Linear(inp_size, emb_dim)
@@ -32,7 +33,7 @@ class ContextNetwork(nn.Module):
             nhead=nhead, 
             norm_first=True)
         self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers, enable_nested_tensor=False)
-        self.target_proj = nn.Linear(emb_dim, emb_dim)
+        self.target_proj = nn.Identity() # nn.Linear(emb_dim, emb_dim)
 
     def forward(self, batch):
         x = batch['encoder_features']
@@ -66,9 +67,7 @@ def calc_loss(batch):
     # targets = torch.cat([targets, 100 * torch.ones(batch_size, 5, emb_size, device=batch['targets'].device)], dim=1) 
     
     sim = preds @ targets.permute(0, 2, 1) # batch_size, num_tokens, num_tokens
-    print(sim.shape, batch['mask'].shape)
     sim = sim[batch['mask']] # num_masked, num_tokens -- for every masked prediction, logits  per all seq
-    print('hui')
     labels = torch.tile(torch.arange(num_tokens), (batch_size, 1))
     labels = labels[batch['mask']].to(batch['targets'].device)
     loss = F.cross_entropy(sim, labels)
