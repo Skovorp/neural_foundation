@@ -74,6 +74,8 @@ def plot_first_n(data, n=1000):
     assert len(data.shape) == 1, f"expected 1d input, got shape: {data.shape}"
     fig, ax = plt.subplots(figsize=(8, 6))
     
+    if n is None:
+        n = data.shape[0]
     n = min(n, data.shape[0])
     data = data[:n]
     times = torch.arange(n) / 250

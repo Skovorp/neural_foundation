@@ -1,6 +1,6 @@
 from dataset import EEGDataset, collate_fn
 from models.bendr import Encoder, ContextNetwork, calc_loss
-from utils.training_utils import benchmark_previous, benchmark_best_constant, benchmark_cumsum
+from utils.training_utils import emb_std, emb_mean, best_ce_loss
 from utils.data_utils import plot_spec, plot_first_n
 
 from torch.utils.data import DataLoader
@@ -10,6 +10,9 @@ import yaml
 from tqdm import tqdm
 import wandb
 import numpy as np
+
+import lovely_tensors as lt
+lt.monkey_patch()
 
 import warnings
 warnings.filterwarnings('ignore', message='Lazy modules.*')
@@ -33,7 +36,7 @@ if __name__ == "__main__":
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        mode='disabled'
+        # mode='disabled'
     )
     
     device = torch.device('cuda')
@@ -52,6 +55,9 @@ if __name__ == "__main__":
     print(f"Encoder:\n{encoder}")
     print(f"\ContextNetwork:\n{context_network}")
     print(f"% tokens masked every batch: {100 * context_network.avg_part_masked(sample_batch['data']):.2f}%")
+    loss_benches = best_ce_loss(cfg['data']['num_chunks'], cfg['context_network']['log_temp'])
+    print(f"Optimal loss for orthogonal distractors: {loss_benches['ort_best_loss']:.3f}")
+    print(f"Optimal loss for inverse distractors:    {loss_benches['inverse_best_loss']:.3f}")
     
     optimizer = torch.optim.Adam(
         list(encoder.parameters()) + list(context_network.parameters()),
@@ -68,38 +74,42 @@ if __name__ == "__main__":
         for batch in pbar:
             optimizer.zero_grad()
             batch['data'] = batch['data'].to(device)
-            print(batch['data'].mean())
             
             batch = encoder(batch)
             batch = context_network(batch)
-            loss = calc_loss(batch)
+            batch = calc_loss(batch, cfg['context_network']['log_temp'])
             
-            loss.backward()
+            batch['loss'].backward()
             optimizer.step()
             scheduler.step()
-            losses.append(loss.item())
+            losses.append(batch['loss'].item())
             
-            bench_previous_loss = benchmark_previous(batch['encoder_features'])
-            bench_best_constant_loss = benchmark_best_constant(batch['encoder_features'])
-            bench_cumsum_loss = benchmark_cumsum(batch['encoder_features'])      
+            pbar.set_description(f"loss: {batch['loss'].item():.5f}")
             
-            pbar.set_description(f"loss: {loss.item():.5f} bench loss: {bench_best_constant_loss:.5f}")   # 
             wandb.log({
-                'step_loss': loss.item(),
-                'bench_previous_loss': bench_previous_loss,
-                'bench_best_constant_loss': bench_best_constant_loss,
-                'bench_cumsum_loss': bench_cumsum_loss,
+                'step_loss': batch['loss'].item(),
                 'lr': scheduler.get_last_lr()[0],
-                'encoder_mean': batch['encoder_features'].mean(),
-                'encoder_sq_mean': (batch['encoder_features'] ** 2).mean(),
-                'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512)
+                'encoder_std': emb_std(batch['encoder_features']),
+                'encoder_mean': emb_mean(batch['encoder_features']),
+                'target_std': emb_std(batch['targets']),
+                'target_mean': emb_std(batch['targets']),
+                'context_std': emb_std(batch['context_vectors']),
+                'context_mean': emb_mean(batch['context_vectors']),
+                'data_mean': batch['data'].mean().item(), 
+                'data_std': batch['data'].std().item(), 
+                
+                'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512),
+                'target_hist': wandb.Histogram(batch['targets'].detach().cpu().numpy(), num_bins=512),
+                'context_hist': wandb.Histogram(batch['context_vectors'].detach().cpu().numpy(), num_bins=512),
+                'loss_hist': wandb.Histogram(batch['per_masktoken_loss'].detach().cpu().numpy(), num_bins=64),
+                
+                'sample_raw_spec': wandb.Image(plot_spec(batch['sample_raw'])),
+                'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
+                'sample_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'])),
+                'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
+                'full_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'], n=None)),
+                'full_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'], n=None)),
             })
-            # wandb.log({
-            #     'sample_raw_spec': wandb.Image(plot_spec(batch['sample_raw'])),
-            #     'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
-            #     'sample_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'])),
-            #     'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
-            # })
             
         print(f"Epoch {epoch_num:>3} average loss {sum(losses) / len(losses):.5f}")
         wandb.log({

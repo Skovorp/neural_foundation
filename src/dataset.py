@@ -25,10 +25,14 @@ class EEGDataset(Dataset):
         return len(self.needed_filenames)
     
     def process_data(self, data):
-        data = highpass_biquad(data, 250, 1)
+        data = highpass_biquad(data, 250, 1) 
         data = bandreject_biquad(data, 250, 50)
         data = bandreject_biquad(data, 250, 100)
         data = data[:, self.buffer_length:]
+        # high pass should remove DC offset, but lets substract mean anyways
+        data = data - data.mean(1, keepdim=True)
+        # lets normalize variance across all channels, to preserve info between channels
+        data = data / ((data ** 2).mean() ** 0.5) # make std 1
         return data
     
     # def pick_tokens(self, chunked):
