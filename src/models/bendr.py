@@ -9,7 +9,7 @@ import math
 
 class LearnedPositionalEncoding(nn.Module):
 
-    def __init__(self, emb_dim, max_len = 500):
+    def __init__(self, emb_dim, max_len=512):
         super().__init__()
         self.embeddings = nn.Embedding(max_len, emb_dim)
 
@@ -25,10 +25,10 @@ class Encoder(BaseModel):
         self.proj = nn.Linear(inp_size, emb_dim)
 
     def forward(self, batch):
-        x = batch['data'].clone()
+        data = batch['data']
         # x -- (batch, chunks, channels, time)
-        batch_size, num_chunks, channels, time = x.shape
-        x = x.view(batch_size, num_chunks, -1)
+        batch_size, num_chunks, channels, time = data.shape
+        x = data.view(batch_size, num_chunks, -1)
         x = self.proj(x)
         batch['encoder_features'] = x
         return batch
@@ -46,7 +46,7 @@ class ContextNetwork(BaseModel):
             nhead=nhead, 
             norm_first=True)
         self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers, enable_nested_tensor=False)
-        self.target_proj = nn.Identity() # nn.Linear(emb_dim, emb_dim)
+        self.target_proj = nn.Linear(emb_dim, emb_dim)
         self.positional_emb = LearnedPositionalEncoding(emb_dim)
 
     def forward(self, batch):
@@ -73,16 +73,16 @@ class ContextNetwork(BaseModel):
     
 def calc_loss(batch, log_temp):
     batch_size, num_tokens, emb_size = batch['targets'].shape
-    targets, preds = batch['targets'].clone(), batch['context_vectors'].clone()
+    targets, preds = batch['targets'], batch['context_vectors']
     norm_targets = torch.norm(targets, 2, dim=2, keepdim=True) # batch_size, num_tokens
     norm_preds = torch.norm(preds, 2, dim=2, keepdim=True) # batch_size, num_tokens
     
-    targets = targets / norm_targets
-    preds = preds / norm_preds
+    good_targets = targets / norm_targets
+    good_preds = preds / norm_preds
     
     # targets = torch.cat([targets, 100 * torch.ones(batch_size, 5, emb_size, device=batch['targets'].device)], dim=1)
     
-    sim = preds @ targets.permute(0, 2, 1) # batch_size, num_tokens, num_tokens
+    sim = good_preds @ good_targets.permute(0, 2, 1) # batch_size, num_tokens, num_tokens
     sim = sim[batch['mask']] # num_masked, num_tokens -- for every masked prediction, logits  per all seq
     labels = torch.tile(torch.arange(num_tokens), (batch_size, 1))
     labels = labels[batch['mask']].to(batch['targets'].device)

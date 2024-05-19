@@ -87,3 +87,8 @@ def plot_first_n(data, n=1000):
     res = PIL.Image.frombytes('RGB', fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
     plt.close()
     return res
+
+def calc_part_clipped(data, clip_val):
+    part_clipped = (torch.abs(data) > (clip_val - 0.01)).sum().item()
+    part_clipped = part_clipped / torch.numel(data)
+    return part_clipped

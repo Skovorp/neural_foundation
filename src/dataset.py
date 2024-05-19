@@ -9,17 +9,20 @@ from torchaudio.functional import highpass_biquad, bandreject_biquad
 
 
 class EEGDataset(Dataset):
-    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window, buffer_length, **kwargs):
+    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window, buffer_length, clip_val, **kwargs):
         super().__init__()
         self.data_dir = Path(data_path)
         self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet')
         
-        self.needed_filenames = self.metadata['filename_h5'][:limit].to_list()
+        if limit is None:
+            limit = len(self.metadata)
+        self.needed_filenames = self.metadata.sort_values(by='duration')['filename_h5'][:limit].to_list()
         self.chunk_length = chunk_length
         self.chunk_stride = chunk_stride
         self.num_chunks = num_chunks
         self.pin_window = pin_window
         self.buffer_length = buffer_length
+        self.clip_val = clip_val
     
     def __len__(self,):
         return len(self.needed_filenames)
@@ -33,6 +36,7 @@ class EEGDataset(Dataset):
         data = data - data.mean(1, keepdim=True)
         # lets normalize variance across all channels, to preserve info between channels
         data = data / ((data ** 2).mean() ** 0.5) # make std 1
+        data = torch.clamp(data, min=-self.clip_val, max=self.clip_val)
         return data
     
     # def pick_tokens(self, chunked):
