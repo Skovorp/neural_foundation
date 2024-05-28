@@ -12,3 +12,4 @@ transformers
 fastparquet
 python-dotenv
 matplotlib
+seaborn
