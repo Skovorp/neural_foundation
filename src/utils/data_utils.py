@@ -47,7 +47,10 @@ def turn_into_patches(data, chunk_length, chunk_stride):
 
 
 def plot_spec(data, n_fft=250, hop_length=125):
-    """Input: 1d torch tensor. Assumes 250hz sampling frequency. Returns PIL.Image"""
+    """Input: 1d torch tensor or np.ndarray. Assumes 250hz sampling frequency. Returns PIL.Image"""
+    if isinstance(data, np.ndarray):
+        data = torch.tensor(data)
+    
     assert len(data.shape) == 1, f"expected 1d input, got shape: {data.shape}"
     spec = stft(data, n_fft=n_fft, window=torch.hann_window(n_fft), hop_length=hop_length, center=False, return_complex=True)
     spec = torch.view_as_real(spec)
