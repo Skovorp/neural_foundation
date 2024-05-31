@@ -74,10 +74,12 @@ if __name__ == "__main__":
         for batch_idx, batch in enumerate(pbar):
             optimizer.zero_grad()
             batch['data'] = batch['data'].to(device)
+            # print(batch['data'])
             
             batch = encoder(batch)
             batch = context_network(batch)
             batch = calc_loss(batch, cfg['context_network']['log_temp'])
+            # print(batch)
             
             batch['loss'].backward()
             optimizer.step()
@@ -86,20 +88,20 @@ if __name__ == "__main__":
             
             pbar.set_description(f"loss: {batch['loss'].item():.5f}")
             
-            # if ((epoch_num - 1) * len(loader) + batch_idx) % cfg['training']['heavy_logs_every'] == 0:
-            #     wandb.log({
-            #         'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512),
-            #         'target_hist': wandb.Histogram(batch['targets'].detach().cpu().numpy(), num_bins=512),
-            #         'context_hist': wandb.Histogram(batch['context_vectors'].detach().cpu().numpy(), num_bins=512),
-            #         'loss_hist': wandb.Histogram(batch['per_masktoken_loss'].detach().cpu().numpy(), num_bins=64),
+            if cfg['training']['heavy_logs_every'] != -1 and ((epoch_num - 1) * len(loader) + batch_idx) % cfg['training']['heavy_logs_every'] == 0:
+                wandb.log({
+                    'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512),
+                    'target_hist': wandb.Histogram(batch['targets'].detach().cpu().numpy(), num_bins=512),
+                    'context_hist': wandb.Histogram(batch['context_vectors'].detach().cpu().numpy(), num_bins=512),
+                    'loss_hist': wandb.Histogram(batch['per_masktoken_loss'].detach().cpu().numpy(), num_bins=64),
                     
-            #         # 'sample_raw_spec': wandb.Image(plot_spec(batch['sample_raw'])),
-            #         'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
-            #         # 'sample_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'])),
-            #         'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
-            #         # 'full_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'], n=None)),
-            #         'full_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'], n=None)),
-            #     }, commit=False)
+                    # 'sample_raw_spec': wandb.Image(plot_spec(batch['sample_raw'])),
+                    'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
+                    # 'sample_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'])),
+                    'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
+                    # 'full_raw_plot': wandb.Image(plot_first_n(batch['sample_raw'], n=None)),
+                    'full_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'], n=None)),
+                }, commit=False)
             
             wandb.log({
                 'step_loss': batch['loss'].item(),
@@ -112,7 +114,7 @@ if __name__ == "__main__":
                 'context_mean': emb_mean(batch['context_vectors']),
                 'data_mean': batch['data'].mean().item(), 
                 'data_std': batch['data'].std().item(), 
-                'batch_part_clipped': calc_part_clipped(batch['data'], cfg['data']['clip_val'])
+                # 'batch_part_clipped': calc_part_clipped(batch['data'], cfg['data']['clip_val'])
             })
             
         print(f"Epoch {epoch_num:>3} average loss {sum(losses) / len(losses):.5f}")

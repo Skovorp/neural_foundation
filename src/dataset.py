@@ -9,14 +9,20 @@ from torchaudio.functional import highpass_biquad, bandreject_biquad
 
 
 class EEGDataset(Dataset):
-    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window, buffer_length, clip_val, **kwargs):
+    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window,  is_processed, buffer_length=0, clip_val=None, **kwargs):
         super().__init__()
         self.data_dir = Path(data_path)
-        self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet')
+        self.is_processed = is_processed
+        if not is_processed:
+            self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet')
+            self.needed_filenames = self.metadata.sort_values(by='duration')['filename_h5'].to_list()
+        else:
+            self.needed_filenames = list(self.data_dir.glob('*'))
         
-        if limit is None:
-            limit = len(self.metadata)
-        self.needed_filenames = self.metadata.sort_values(by='duration')['filename_h5'][:limit].to_list()
+        if limit is not None:
+            self.needed_filenames = self.needed_filenames[:limit]
+            
+        
         self.chunk_length = chunk_length
         self.chunk_stride = chunk_stride
         self.num_chunks = num_chunks
@@ -28,6 +34,8 @@ class EEGDataset(Dataset):
         return len(self.needed_filenames)
     
     def process_data(self, data):
+        if self.is_processed:
+            return data
         data = highpass_biquad(data, 250, 1) 
         data = bandreject_biquad(data, 250, 50)
         data = bandreject_biquad(data, 250, 100)
@@ -39,21 +47,15 @@ class EEGDataset(Dataset):
         data = torch.clamp(data, min=-self.clip_val, max=self.clip_val)
         return data
     
-    # def pick_tokens(self, chunked):
-    #     if not self.pin_window:
-    #         assert chunked.shape[0] >= self.num_chunks, f"Not enough tokens in sample. Need {self.num_chunks}, have only {chunked.shape[0]}"
-    #         start = torch.randint(low=0, high=chunked.shape[0] - self.num_chunks, size=(1,))[0]
-    #         return chunked[start : start + self.num_chunks, :, :]
-    #     else:
-    #         return chunked[100 : 100 + self.num_chunks, :, :]
     
     def chunked_length(self):
         return (self.num_chunks - 1) * self.chunk_stride + self.chunk_length + self.buffer_length
     
+    
     def pick_chunked(self, data):
         chunked_length = self.chunked_length()
         if self.pin_window:
-            start = data.shape[1] // 2
+            start = 0
         else:
             assert data.shape[1] >= chunked_length, f"Not enough points in sample. Need {chunked_length}, have only {data.shape[1]}"
             start = torch.randint(low=0, high=data.shape[1] - chunked_length + 1, size=(1,))[0]
@@ -61,10 +63,13 @@ class EEGDataset(Dataset):
 
 
     def __getitem__(self, index):
-        raw_data, timestamps, meta = load_recording(self.data_dir / self.needed_filenames[index])
-        raw_data = torch.tensor(raw_data)
-        raw_data = self.pick_chunked(raw_data)
+        if not self.is_processed:
+            raw_data, timestamps, meta = load_recording(self.data_dir / self.needed_filenames[index])
+            raw_data = torch.tensor(raw_data)
+        else:
+            raw_data = torch.load(self.data_dir / self.needed_filenames[index])
         
+        raw_data = self.pick_chunked(raw_data)
         proc_data = self.process_data(raw_data)
         
         chunked_data = turn_into_patches(proc_data, self.chunk_length, self.chunk_stride)
@@ -75,7 +80,6 @@ class EEGDataset(Dataset):
             'chunked_data': chunked_data
         }
         
-    
     
 def collate_fn(elements):
     res = {'data': []}
