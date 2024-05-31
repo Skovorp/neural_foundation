@@ -4,7 +4,7 @@ data:
   limit: 32
   chunk_length: 250
   chunk_stride: 225
-  num_chunks: 128
+  num_chunks: 16
   batch_size: 32
   num_workers: 4
   pin_window: true
@@ -15,16 +15,16 @@ context_network:
   emb_dim: 768
   ffn_dim: 3072
   nhead: 8
-  transformer_num_layers: 6
+  transformer_num_layers: 12
   mask_prob: 0.5
   mask_length: 1
   log_temp: 0 # e ^ 1.1 = 3.004
 optimizer:
-  lr: 1.0e-3
-  weight_decay: 1.0e-1
+  lr: 2.0e-3
+  weight_decay: 1.0e+0
 scheduler:
-  warmup_steps: 30
-  total_steps: 300
+  warmup_steps: 80
+  total_steps: 800
 training:
-  num_epochs: 300
-  heavy_logs_every: -1
+  num_epochs: 800
+  heavy_logs_every: 10
