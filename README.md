@@ -1,3 +1,3 @@
 # lets make eeg pretraining work!
 
-https://wandb.ai/sposiboh/neural_foundation?nw=nwusersposiboh
+Code for my thesis: "Neural Network Pretraining on Large-Scale Consumer EEG Data"
