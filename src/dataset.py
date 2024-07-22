@@ -3,19 +3,20 @@ from torch import nn
 from torch.utils.data import Dataset
 from pathlib import Path
 import pandas as pd
-from utils.data_utils import load_recording, turn_into_patches, plot_spec
+from utils.data_utils import load_recording, turn_into_patches, plot_spec, band_pass_brickwall
 
 from torchaudio.functional import highpass_biquad, bandreject_biquad
+torch.multiprocessing.set_start_method('spawn')
 
 
 class EEGDataset(Dataset):
-    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window,  is_processed, buffer_length=0, clip_val=None, **kwargs):
+    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window,  is_processed, buffer_length=0, clip_val=None, last_is_serial=None, **kwargs):
         super().__init__()
         self.data_dir = Path(data_path)
         self.is_processed = is_processed
         if not is_processed:
             self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet')
-            self.needed_filenames = self.metadata.sort_values(by='duration')['filename_h5'].to_list()
+            self.needed_filenames = self.metadata.sort_values(by='duration', ascending=False)['filename_h5'].to_list()
         else:
             self.needed_filenames = list(self.data_dir.glob('*'))
         
@@ -29,6 +30,7 @@ class EEGDataset(Dataset):
         self.pin_window = pin_window
         self.buffer_length = buffer_length
         self.clip_val = clip_val
+        self.last_is_serial = last_is_serial
     
     def __len__(self,):
         return len(self.needed_filenames)
@@ -36,15 +38,19 @@ class EEGDataset(Dataset):
     def process_data(self, data):
         if self.is_processed:
             return data
-        data = highpass_biquad(data, 250, 1) 
-        data = bandreject_biquad(data, 250, 50)
-        data = bandreject_biquad(data, 250, 100)
+        data = torch.stack([
+            band_pass_brickwall(data[0], 1, 40),
+            band_pass_brickwall(data[1], 1, 40),
+            band_pass_brickwall(data[2], 1, 40),
+            band_pass_brickwall(data[3], 1, 40),
+        ])
+        data = torch.clip(data, -1.95e-4, 1.95e-4)
         data = data[:, self.buffer_length:]
         # high pass should remove DC offset, but lets substract mean anyways
         data = data - data.mean(1, keepdim=True)
         # lets normalize variance across all channels, to preserve info between channels
         data = data / ((data ** 2).mean() ** 0.5) # make std 1
-        data = torch.clamp(data, min=-self.clip_val, max=self.clip_val)
+        # data = torch.clamp(data, min=-self.clip_val, max=self.clip_val)
         return data
     
     
@@ -64,20 +70,23 @@ class EEGDataset(Dataset):
 
     def __getitem__(self, index):
         if not self.is_processed:
-            raw_data, timestamps, meta = load_recording(self.data_dir / self.needed_filenames[index])
-            raw_data = torch.tensor(raw_data)
+            data, timestamps, meta = load_recording(self.data_dir / self.needed_filenames[index])
+            data = torch.tensor(data).cuda()
         else:
-            raw_data = torch.load(self.data_dir / self.needed_filenames[index])
+            # print(self.needed_filenames[index]) 
+            data = torch.load(self.data_dir / self.needed_filenames[index])
+        serial = self.needed_filenames[index].stem.split('_')[-1] if self.last_is_serial else None
+        data = data
+        data = self.process_data(data)
+        data = self.pick_chunked(data)
         
-        raw_data = self.pick_chunked(raw_data)
-        proc_data = self.process_data(raw_data)
-        
-        chunked_data = turn_into_patches(proc_data, self.chunk_length, self.chunk_stride)
+        chunked_data = turn_into_patches(data, self.chunk_length, self.chunk_stride)
         assert chunked_data.shape[0] == self.num_chunks, f"sample should have {self.num_chunks}, got {chunked_data.shape[0]}"
         return {
-            'raw_data': raw_data,
-            'processed_data': proc_data,
-            'chunked_data': chunked_data
+            'raw_data': data,
+            'processed_data': data,
+            'chunked_data': chunked_data,
+            'serial': serial
         }
         
     
@@ -90,4 +99,5 @@ def collate_fn(elements):
     
     res['sample_raw'] = elements[0]['raw_data'][0]
     res['sample_processed'] = elements[0]['processed_data'][0]
+    res['serial'] = [el['serial'] for el in elements]
     return res

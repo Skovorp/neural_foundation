@@ -1,13 +1,14 @@
 data:
-  data_path: /home/ubuntu/small_data/good_chunks
+  data_path: /home/ubuntu/small_data/sloped_brickwall
   is_processed: true
-  limit: 32
+  limit: 500
   chunk_length: 250
   chunk_stride: 225
-  num_chunks: 16
-  batch_size: 32
-  num_workers: 4
-  pin_window: true
+  num_chunks: 64
+  batch_size: 64
+  num_workers: 0
+  pin_window: false
+  last_is_serial: true
 encoder:
   inp_size: 1000 # 4 * 500
   emb_dim: 768
@@ -20,11 +21,14 @@ context_network:
   mask_length: 1
   log_temp: 0 # e ^ 1.1 = 3.004
 optimizer:
-  lr: 2.0e-3
-  weight_decay: 1.0e+0
+  lr: 3.0e-4
+  weight_decay: 1.0e-2
 scheduler:
-  warmup_steps: 80
-  total_steps: 800
+  warmup_steps: 300
+  total_steps: 30000
 training:
-  num_epochs: 800
-  heavy_logs_every: 10
+  num_epochs: 30000
+  heavy_logs_every: 30
+save: 
+  dir: /home/ubuntu/neural_foundation/src/checkpoints
+  every: 250

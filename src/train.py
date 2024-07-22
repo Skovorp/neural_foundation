@@ -10,6 +10,7 @@ import yaml
 from tqdm import tqdm
 import wandb
 import numpy as np
+from datetime import datetime
 
 import lovely_tensors as lt
 lt.monkey_patch()
@@ -44,7 +45,7 @@ if __name__ == "__main__":
     dataset = EEGDataset(**cfg['data'])
     print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0]['chunked_data'].shape}")
     
-    loader = DataLoader(dataset, cfg['data']['batch_size'], num_workers=cfg['data']['num_workers'], shuffle=False, drop_last=True, collate_fn=collate_fn)
+    loader = DataLoader(dataset, cfg['data']['batch_size'], num_workers=cfg['data']['num_workers'], shuffle=True, drop_last=True, collate_fn=collate_fn)
     sample_batch = next(iter(loader))
     print("Shape of sample batch:", sample_batch['data'].shape)
     print(f"Total length of segment: {sample_batch['sample_raw'].shape[0] / 250:.2f}s")
@@ -74,12 +75,10 @@ if __name__ == "__main__":
         for batch_idx, batch in enumerate(pbar):
             optimizer.zero_grad()
             batch['data'] = batch['data'].to(device)
-            # print(batch['data'])
             
             batch = encoder(batch)
             batch = context_network(batch)
             batch = calc_loss(batch, cfg['context_network']['log_temp'])
-            # print(batch)
             
             batch['loss'].backward()
             optimizer.step()
@@ -89,6 +88,7 @@ if __name__ == "__main__":
             pbar.set_description(f"loss: {batch['loss'].item():.5f}")
             
             if cfg['training']['heavy_logs_every'] != -1 and ((epoch_num - 1) * len(loader) + batch_idx) % cfg['training']['heavy_logs_every'] == 0:
+                print("logging data...")
                 wandb.log({
                     'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512),
                     'target_hist': wandb.Histogram(batch['targets'].detach().cpu().numpy(), num_bins=512),
@@ -116,6 +116,11 @@ if __name__ == "__main__":
                 'data_std': batch['data'].std().item(), 
                 # 'batch_part_clipped': calc_part_clipped(batch['data'], cfg['data']['clip_val'])
             })
+            
+            
+        if epoch_num % cfg['save']['every'] == 0:
+            torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{datetime.now().isoformat()}.pt")
+            torch.save(context_network.state_dict(), f"{cfg['save']['dir']}/context_network_{datetime.now().isoformat()}.pt")
             
         print(f"Epoch {epoch_num:>3} average loss {sum(losses) / len(losses):.5f}")
         wandb.log({

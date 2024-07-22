@@ -50,9 +50,10 @@ def plot_spec(data, n_fft=250, hop_length=125):
     """Input: 1d torch tensor or np.ndarray. Assumes 250hz sampling frequency. Returns PIL.Image"""
     if isinstance(data, np.ndarray):
         data = torch.tensor(data)
+        
     
     assert len(data.shape) == 1, f"expected 1d input, got shape: {data.shape}"
-    spec = stft(data, n_fft=n_fft, window=torch.hann_window(n_fft), hop_length=hop_length, center=False, return_complex=True)
+    spec = stft(data, n_fft=n_fft, window=torch.hann_window(n_fft).to(data.device), hop_length=hop_length, center=False, return_complex=True)
     spec = torch.view_as_real(spec)
     spec = torch.sqrt((spec * spec).sum(2))
     
@@ -60,7 +61,7 @@ def plot_spec(data, n_fft=250, hop_length=125):
     times = torch.linspace(0, 125, spec.shape[0])
     
     fig, ax = plt.subplots(figsize=(8, 6))
-    c = ax.pcolor(freqs, times, spec, shading='auto',
+    c = ax.pcolor(freqs.cpu().numpy(), times, spec.cpu().numpy(), shading='auto',
                norm=LogNorm(vmin=max(spec.min().item(), 1e-9), vmax=max(spec.max().item(), 1e-9)))
     fig.colorbar(c, ax=ax)
     
@@ -82,7 +83,7 @@ def plot_first_n(data, n=1000):
     n = min(n, data.shape[0])
     data = data[:n]
     times = torch.arange(n) / 250
-    ax.plot(times, data)
+    ax.plot(times, data.cpu())
     
     ax.set_ylabel('Data')
     ax.set_xlabel('Time [sec]')
@@ -95,3 +96,30 @@ def calc_part_clipped(data, clip_val):
     part_clipped = (torch.abs(data) > (clip_val - 0.01)).sum().item()
     part_clipped = part_clipped / torch.numel(data)
     return part_clipped
+
+
+def band_pass_brickwall(data, min_freq, max_freq):
+    # zero all freqs less then min_freq and more then max_freq, decline from 1 to 0 gradually across "side" samples
+    # default slope is 0.5hz, slope's middle is centered at cutoff freq. Slope is done by convolution
+    # does fft, mask, ifft
+    if len(data.shape) == 1:
+        data = data.unsqueeze(0)
+    assert min_freq < max_freq, 'you are retard'
+    side = int(data.shape[-1] / 500) 
+    bin_freqs = torch.abs(torch.fft.fftfreq(data.shape[-1], d=1 / 250))
+    mask = torch.ones_like(bin_freqs, dtype=torch.float32, device=data.device)
+    mask_for_zero = (bin_freqs >= max_freq) | (bin_freqs <= min_freq)
+    mask[mask_for_zero] = 0
+    smooth_kernel = (torch.ones(side) / side).reshape(1, 1, side).to(mask.device)
+    mask = torch.nn.functional.conv1d(mask.unsqueeze(0), smooth_kernel, bias=None, stride=1, padding='same')
+    
+    
+    freqs = torch.fft.fft(data, axis=-1)
+    freqs = freqs * mask
+    
+    filtered = torch.fft.ifft(freqs, axis=-1)
+    filtered = filtered.real
+    discard_samples = 250 * 20 * 20 # experiment shows that ripples from step between stard and end subside after 20 sec, lets add 10x safety
+    filtered = filtered[:, discard_samples:-discard_samples]
+    
+    return filtered[0]
