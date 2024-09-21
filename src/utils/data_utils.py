@@ -17,7 +17,8 @@ def load_recording(path_to_h5):
         metadata: dict
     """
     with h5py.File(path_to_h5, "r") as f:
-        assert list(f.keys()) == ['eeg4_datasetName'], f"expected structure to be ['eeg4_datasetName'], got {f.keys()}"
+        assert list(f.keys()) == ['eeg4_datasetName'] or list(f.keys()) == ['eeg4_datasetName', 'ppg1_datasetName'], f"expected structure to be ['eeg4_datasetName'], got {f.keys()}"
+        # ppg1_datasetName is heartrate data that's recorder every 10ms and not 4ms like eeg -- i just ignore it
         data = f['eeg4_datasetName']
         data_dtype = np.dtype([('timestamp_name', '<u4'), ('eeg1_name', '<f4'), ('eeg2_name', '<f4'), ('eeg3_name', '<f4'), ('eeg4_name', '<f4')])
         assert data.dtype == data_dtype, f"expected dtype to be {data_dtype}, got {data.dtype}"
@@ -46,6 +47,16 @@ def turn_into_patches(data, chunk_length, chunk_stride):
     return chunked
 
 
+def fig2img(fig):
+    """Convert a Matplotlib figure to a PIL Image and return it"""
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf)
+    buf.seek(0)
+    img = PIL.Image.open(buf)
+    return img
+
+
 def plot_spec(data, n_fft=250, hop_length=125):
     """Input: 1d torch tensor or np.ndarray. Assumes 250hz sampling frequency. Returns PIL.Image"""
     if isinstance(data, np.ndarray):
@@ -68,7 +79,8 @@ def plot_spec(data, n_fft=250, hop_length=125):
     ax.set_ylabel('Frequency [Hz]')
     ax.set_xlabel('Time [sec]')
     fig.canvas.draw()
-    res = PIL.Image.frombytes('RGB', fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+    # res = PIL.Image.frombytes('RGB', fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+    res = fig2img(fig)
     plt.close()
     return res
 
@@ -88,12 +100,15 @@ def plot_first_n(data, n=1000):
     ax.set_ylabel('Data')
     ax.set_xlabel('Time [sec]')
     fig.canvas.draw()
-    res = PIL.Image.frombytes('RGB', fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+    # res = PIL.Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+    res = fig2img(fig)
     plt.close()
     return res
 
 def calc_part_clipped(data, clip_val):
-    part_clipped = (torch.abs(data) > (clip_val - 0.01)).sum().item()
+    abs_data = data.abs()
+    max_val = abs_data.max()
+    part_clipped = (abs_data > (max_val - 0.01)).sum().item()
     part_clipped = part_clipped / torch.numel(data)
     return part_clipped
 
@@ -104,7 +119,7 @@ def band_pass_brickwall(data, min_freq, max_freq):
     # does fft, mask, ifft
     if len(data.shape) == 1:
         data = data.unsqueeze(0)
-    assert min_freq < max_freq, 'you are retard'
+    assert min_freq < max_freq, 'you are dumb'
     side = int(data.shape[-1] / 500) 
     bin_freqs = torch.abs(torch.fft.fftfreq(data.shape[-1], d=1 / 250))
     mask = torch.ones_like(bin_freqs, dtype=torch.float32, device=data.device)

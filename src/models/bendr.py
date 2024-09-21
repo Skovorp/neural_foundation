@@ -19,7 +19,7 @@ class LearnedPositionalEncoding(nn.Module):
         return x
 
 
-class Encoder(BaseModel):
+class EncoderLinear(BaseModel):
     def __init__(self, inp_size, emb_dim, **kwargs):
         super().__init__()
         self.proj = nn.Linear(inp_size, emb_dim)
@@ -33,26 +33,61 @@ class Encoder(BaseModel):
         batch['encoder_features'] = x
         return batch
     
+# https://github.com/facebookresearch/fairseq/blob/main/fairseq/models/wav2vec/wav2vec2.py#L844
+class EncoderConv(BaseModel):
+    def __init__(self, emb_dim, **kwargs):
+        super().__init__()
+        self.stack = nn.Sequential(
+            nn.Conv1d(in_channels=4, out_channels=emb_dim, kernel_size=3, stride=3),
+            nn.GeLU(),
+            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            nn.GeLU(),
+            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            nn.GeLU(),
+            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            nn.GeLU(),
+            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            nn.GeLU(),
+            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            nn.GeLU(),
+        )
+
+    def forward(self, batch):
+        x = batch['data']
+        # x -- (batch, channels, time)
+        # batch_size, channels, time = x.shape
+        x = self.stack(x)
+        batch['encoder_features'] = x
+        return batch
+    
+    
+class MyIdentity(nn.Module):
+    def __init__(self, ):
+        super().__init__()
+    
+    def forward(self, x):
+        return x.clone()
     
 class ContextNetwork(BaseModel):
-    def __init__(self, emb_dim, ffn_dim, nhead, transformer_num_layers, mask_prob, mask_length, **kwargs):
+    def __init__(self, emb_dim, ffn_dim, nhead, transformer_num_layers, mask_prob, mask_length, min_masked, **kwargs):
         super().__init__()
         self.mask_emb = nn.Parameter(torch.randn(emb_dim))
         self.mask_prob = mask_prob
         self.mask_length = mask_length
+        self.min_masked = min_masked
         transformer_layer = nn.TransformerEncoderLayer(
             d_model=emb_dim, 
             dim_feedforward=ffn_dim, 
             nhead=nhead, 
             norm_first=True)
         self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers, enable_nested_tensor=False)
-        self.target_proj = nn.Linear(emb_dim, emb_dim)
+        self.target_proj = MyIdentity() # nn.Linear(emb_dim, emb_dim) # FIXME mean of target is bigger that
         self.positional_emb = LearnedPositionalEncoding(emb_dim)
 
     def forward(self, batch):
         x = batch['encoder_features'].clone()
         batch_size, num_chunks, emb_dim = x.shape
-        mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length)
+        mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length, self.min_masked)
         x[mask] = self.mask_emb
         assert ((x[0, :, 0].detach().cpu() == self.mask_emb[0].detach().cpu()) == mask[0, :].detach().cpu()).all(), "masking failed :(" 
         assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!"
@@ -67,46 +102,62 @@ class ContextNetwork(BaseModel):
         batch_size, num_chunks, _, _ = batch.shape
         res = 0
         for _ in range(100):
-            mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length)
+            mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length, self.min_masked)
             res += (mask * 1.0).mean().item() # true is mask
         return res / 100
     
-def calc_loss(batch, log_temp):
-    batch_size, num_tokens, emb_size = batch['targets'].shape
-    targets, preds = batch['targets'], batch['context_vectors']
-    norm_targets = torch.norm(targets, 2, dim=2, keepdim=True) # batch_size, num_tokens
-    norm_preds = torch.norm(preds, 2, dim=2, keepdim=True) # batch_size, num_tokens
+# Loss code is hard. Bendr probably has a few errors. Sources are here 
+# BENDR: https://github.com/SPOClab-ca/BENDR/blob/main/dn3_ext.py#L271
+# Wav2vec2: https://github.com/facebookresearch/fairseq/blob/920a548ca770fb1a951f7f4289b4d3a0c1bc226f/fairseq/models/wav2vec/wav2vec2.py#L499
+
+
+def pick_negatives(x, num_negatives):
+    # for each el in seq_len get num_negatives other els from the same batch
+    batch_size, seq_len, emb_size = x.shape 
     
-    good_targets = targets / norm_targets
-    good_preds = preds / norm_preds
+    self_indexes = torch.arange(seq_len, device=x.device).unsqueeze(-1).expand(-1, num_negatives) # (seq_len, num_negatives)
+
+    neg_idxs = torch.randint(low=0, high=seq_len - 1, size=(batch_size, seq_len, num_negatives), device=x.device)
+                             
+    neg_idxs[neg_idxs >= self_indexes.unsqueeze(0)] += 1
+    neg_idxs = neg_idxs.view(batch_size, seq_len * num_negatives, 1).expand(batch_size, seq_len * num_negatives, emb_size)
+
+    res = torch.gather(x, 1, neg_idxs).view(batch_size, seq_len, num_negatives, emb_size)
+    return res
+
+def calc_loss_proper(batch, temp, num_negatives):
+    features, context, mask = batch['targets'], batch['context_vectors'], batch['mask']
+    batch_size, _, emb_size = features.shape
     
-    # targets = torch.cat([targets, 100 * torch.ones(batch_size, 5, emb_size, device=batch['targets'].device)], dim=1)
+    masked_context = context[mask].view(batch_size, -1, emb_size)
+    masked_features = features[mask].view(batch_size, -1, emb_size)
     
-    sim = good_preds @ good_targets.permute(0, 2, 1) # batch_size, num_tokens, num_tokens
-    sim = sim[batch['mask']] # num_masked, num_tokens -- for every masked prediction, logits  per all seq
-    labels = torch.tile(torch.arange(num_tokens), (batch_size, 1))
-    labels = labels[batch['mask']].to(batch['targets'].device)
-    sim = sim * math.exp(log_temp)
-    unreduced_loss = F.cross_entropy(sim, labels, reduction='none')
+    num_masked = masked_features.size(1)
     
-    # set batch=1, num_chunks=8 to see how things works
-    # print(sim[:batch['mask'][0].sum()])
-    # print(batch['mask'][0])
-    # print(labels[:batch['mask'][0].sum()])
-    # print(F.cross_entropy(sim, labels, reduction='none'))
-    # example of good vals
-    # tensor([[ 2.7511, -0.5308, -0.3625, -0.2960, -0.2756, -0.3741, -0.3812, -0.5015],
-    #     [-0.6111,  2.7569, -0.2216, -0.6170, -0.3746, -0.5203, -0.1013, -0.3689],
-    #     [-0.1247, -0.1079, -0.2098, -0.2186,  2.7137, -0.1079, -0.1882, -0.3002],
-    #     [-0.0668, -0.6090, -0.4044, -0.5796, -0.3214,  2.5963, -0.1835, -0.6229],
-    #     [-0.3907, -0.5906, -0.5988, -0.4737, -0.7476, -0.6327,  2.7852, -0.6409],
-    #     [-0.3811, -0.4140, -0.5004, -0.3402, -0.3983, -0.5376, -0.3075,  2.6888]],
-    #    device='cuda:0', grad_fn=<MulBackward0>)
-    # tensor([[ True,  True, False, False,  True,  True,  True,  True]])
-    # tensor([0, 1, 4, 5, 6, 7], device='cuda:0')
-    # loss: 0.27600 -- close to orthogonal optimum
+    negs = pick_negatives(masked_features, num_negatives) # (batch_size, num_masked, num_negatives, emb_size)
+    sim_targets = torch.cat([masked_features.unsqueeze(2), negs], dim=2) # (batch_size, num_masked, 1 + num_negatives, emb_size)
+    
+    sims_raw = F.cosine_similarity(masked_context.unsqueeze(2), sim_targets, dim=3) # (batch_size, num_masked, 1 + num_negatives)
+
+    # дальше тут надо -inf втыкать какогото хуя если негатив совпадет с таргетом идеально, ебал рот эту хуйню пока
+    sims = sims_raw / temp
+    sims = sims.permute(0, 2, 1) # (batch_size, 1 + num_negatives, num_masked)
+    
+    ce_target = torch.zeros(batch_size, num_masked, dtype=torch.long, device=sims.device) 
+    unreduced_loss = F.cross_entropy(sims, ce_target, reduction='none')
     
     batch['per_masktoken_loss'] = unreduced_loss
-    batch['loss'] = unreduced_loss.mean()
+    batch['loss'] = unreduced_loss.mean() 
+    
+    batch['loss'] = batch['loss'] - (batch['targets'] ** 2).mean() * 0.01
+    
+    with torch.no_grad():
+        assert sims.argmax(1).shape == (batch_size, num_masked)
+        batch['acc_feature_choice'] = ((sims.argmax(1) == 0) * 1.0).mean()
+        batch['mean_correct_sim'] = sims_raw[:, :, 0].mean()
+        batch['mean_destractor_sim'] = sims_raw[:, :, 1:].mean()
     
     return batch
+
+# WHY switching to identity worsened results?
+# smaller variance? targets are too close to eachother? its not like sound?

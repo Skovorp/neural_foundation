@@ -33,17 +33,36 @@ def benchmark_cumsum(encoder_res):
         return ((target - pred) ** 2).mean().item()
 
 
-def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length):
+def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length, min_masked):
     mask = 1 * (torch.rand(batch_size, num_chunks) < mask_prob)
-    # print("orig mask ", mask.tolist())
+        
     mask[:, mask_length:] = mask[:, mask_length:] - mask[:, : -mask_length]
-    # print("added_mask", mask.tolist())
     mask = mask.cumsum(1) > 0
-    if mask.sum() == 0:
-        print("Got empty mask, regenerating...")
-        return make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length)
     
+    # we need to have the same amount of masked tokens in each sequence to calculate loss easier
+    non_zero = torch.count_nonzero(mask, dim=1)
+    common_num_masked = min_masked # max(non_zero.max(), min_masked)
+    # print(f"Masked tokens: {max_num_masked} / {num_chunks}")
+    # if common_num_masked > min_masked:
+    #     print(f"Overshoot num masked: {common_num_masked}")
+    diff_num_mask = common_num_masked - non_zero # positive -> add more masks (True)
+    iteration_starts = torch.randint(low=0, high=num_chunks, size=(batch_size, ))
+    
+    for i in range(batch_size):
+        j = iteration_starts[i] # otherwise all beginning chunks are always masked
+        while diff_num_mask[i] != 0:
+            if diff_num_mask[i] > 0 and not mask[i, j]:
+                mask[i, j] = True
+                diff_num_mask[i] -= 1
+            elif diff_num_mask[i] < 0 and mask[i, j]:
+                mask[i, j] = False
+                diff_num_mask[i] += 1
+            j = (j + 1) % num_chunks
+    assert (diff_num_mask == 0).all(), "Mask failed, different count of masked tokens in sequences"
+    # print(mask.sum(1))
+    assert (mask.sum(1) == min_masked).all()
     return mask
+
 
 
 def emb_std(embs):
@@ -59,17 +78,24 @@ def emb_mean(embs):
     with torch.no_grad():
         return embs.mean().item()
     
-def best_ce_loss(num_chunks, log_temp):
+def best_ce_loss(num_chunks, temp):
     """When we calculate CE loss over cos sim scores, loss can be pretty big even for pretty good predictions
     This function calculates best ce loss in case:
     1) All distractors get orthogonal embeddings. This is pretty good
     2) All distractors git inverse embedding. This is theoretically optimal
-    Cos sim scores are multiplied by exp(log_temp). Should be 0 for vanilla score"""
-    max_val = math.exp(1 * math.exp(log_temp))
+    Cos sim scores are divided by temp. Should be 1 for vanilla score"""
+    max_val = math.exp(1 / temp)
     ort_val = 1 # e ^ 0
-    inv_val = math.exp(-1 * math.exp(log_temp))
+    inv_val = math.exp(-1 / temp)
     
     return {
         'ort_best_loss': -1 * math.log(max_val / (max_val + (num_chunks - 1) * ort_val)),
         'inverse_best_loss': -1 * math.log(max_val/ (max_val + (num_chunks - 1) * inv_val)),
     }
+    
+def warn_one_batch(is_one_batch):
+    for i in range(10):
+        if is_one_batch:
+            print("💀💀💀💀💀💀💀💀💀💀💀💀💀💀 THIS IS ONE BATCH TEST 💀💀💀💀💀💀💀💀💀💀💀💀💀💀")
+        else:
+            print("🚨🚨🚨 REAL RUN 🚨🚨🚨")

@@ -7,7 +7,7 @@ data:
   num_chunks: 64
   batch_size: 64
   num_workers: 0
-  pin_window: false
+  pin_window: true
   last_is_serial: true
 encoder:
   inp_size: 1000 # 4 * 500
