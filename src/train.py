@@ -1,7 +1,6 @@
 from dataset.labeled_dataset import EEGLabeledDataset, collate_fn
-from models.bendr import Encoder, ContextNetwork, calc_loss_proper
-from utils.training_utils import emb_std, emb_mean, best_ce_loss, warn_one_batch
-from utils.data_utils import plot_spec, plot_first_n, calc_part_clipped
+from models.bendr import EncoderConv, ContextNetwork, calc_loss_proper
+from utils.training_utils import emb_std, emb_mean, warn_one_batch, info_about_training, plot_pca, plot_sim_image
 
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import SequentialLR, LinearLR
@@ -38,32 +37,18 @@ if __name__ == "__main__":
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        mode='disabled'
+        # mode='disabled'
     )
     
     device = torch.device('mps')
     
     dataset = EEGLabeledDataset(**cfg['data'])
-    print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0]['chunked_data'].shape}")
-    
-    loader = DataLoader(dataset, cfg['data']['batch_size'], 
-                        num_workers=cfg['data']['num_workers'], persistent_workers=cfg['data']['persistent_workers'],
+    loader = DataLoader(dataset, cfg['data']['batch_size'], num_workers=cfg['data']['num_workers'], 
+                        persistent_workers=cfg['data']['persistent_workers'],
                         shuffle=False, drop_last=True, collate_fn=collate_fn)
-    batches_in_epoch = len(loader)
-    sample_batch = next(iter(loader))
-    print("Shape of sample batch:", sample_batch['data'].shape)
-    print(f"Total length of segment: {sample_batch['sample_processed'].shape[0] / 250:.2f}s")
-    
-    
-    encoder = Encoder(**cfg['encoder']).to(device)
+    encoder = EncoderConv(**cfg['encoder']).to(device)
     context_network = ContextNetwork(**cfg['context_network']).to(device)
-    print(f"Encoder:\n{encoder}")
-    print(f"\ContextNetwork:\n{context_network}")
-    print(f"% tokens masked every batch: {100 * context_network.avg_part_masked(sample_batch['data']):.2f}%")
-    loss_benches = best_ce_loss(cfg['context_network']['num_negatives'], cfg['context_network']['temp'])
-    print(f"Optimal loss for orthogonal distractors: {loss_benches['ort_best_loss']:.3f}")
-    print(f"Optimal loss for inverse distractors:    {loss_benches['inverse_best_loss']:.3f}")
-    
+    info_about_training(dataset, loader, encoder, context_network, cfg, device)
     warn_one_batch(cfg['data']['pin_window'])
     
     optimizer = torch.optim.Adam(
@@ -71,7 +56,7 @@ if __name__ == "__main__":
         **cfg['optimizer']
     )
     
-    total_steps = batches_in_epoch * cfg['training']['num_epochs']
+    total_steps = len(loader) * cfg['training']['num_epochs']
     warmup_steps = int(cfg['scheduler']['part_warmup_steps'] * total_steps)
     warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1, total_iters=warmup_steps)
     other_scheduler = LinearLR(optimizer, start_factor=1, end_factor=1e-6, total_iters=total_steps - warmup_steps)
@@ -99,16 +84,17 @@ if __name__ == "__main__":
             pbar.set_description(f"loss: {batch['loss'].item():.5f} acc: {100 * batch['acc_feature_choice'].item():.2f}%")
             
             if cfg['training']['heavy_logs_every'] != -1 and ((epoch_num - 1) * len(loader) + batch_idx) % cfg['training']['heavy_logs_every'] == 0:
-                print("logging data...")
                 wandb.log({
                     'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512),
                     'target_hist': wandb.Histogram(batch['targets'].detach().cpu().numpy(), num_bins=512),
                     'context_hist': wandb.Histogram(batch['context_vectors'].detach().cpu().numpy(), num_bins=512),
                     'loss_hist': wandb.Histogram(batch['per_masktoken_loss'].detach().cpu().numpy(), num_bins=64),
                     
-                #     # 'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
-                #     # 'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
-                #     # 'full_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'], n=None)),
+                    'sample_sim': wandb.Image(plot_sim_image(batch['targets'][0], batch['context_vectors'][0], batch['mask'][0])),
+                    'sample_pca': wandb.Image(plot_pca(batch['targets'][0], batch['context_vectors'][0], batch['mask'][0]))
+                    # 'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
+                    # 'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
+                    # 'full_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'], n=None)),
                 }, commit=False)
             
             wandb.log({
@@ -118,16 +104,14 @@ if __name__ == "__main__":
                 'mean_destractor_sim': batch['mean_destractor_sim'].item(),
                 'lr': scheduler.get_last_lr()[0],
                 
-                'data_std': emb_std(batch['data'].view(cfg['data']['batch_size'], cfg['data']['num_chunks'], -1)), 
                 'encoder_std': emb_std(batch['encoder_features']),
                 'target_std': emb_std(batch['targets']),
                 'context_std': emb_std(batch['context_vectors']),
                 
-                'data_mean': emb_mean(batch['data'].view(cfg['data']['batch_size'], cfg['data']['num_chunks'], -1)), 
                 'encoder_mean': emb_mean(batch['encoder_features']),
                 'target_mean': emb_mean(batch['targets']),
                 'context_mean': emb_mean(batch['context_vectors']),
-                # 'batch_part_clipped': calc_part_clipped(batch['data']) -- how to calc after normalisation????
+                # 'batch_partnnnn_clipped': calc_part_clipped(batch['data']) -- how to calc after normalisation????
             })
             
             

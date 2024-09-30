@@ -9,7 +9,7 @@ from utils.data_utils import load_recording, turn_into_patches
 
 
 class EEGLabeledDataset(Dataset):
-    def __init__(self, data_path, limit, chunk_length, chunk_stride, num_chunks, pin_window, cache_processed_path, **kwargs):
+    def __init__(self, data_path, limit, train_length, pin_window, cache_processed_path, **kwargs):
         super().__init__()
         self.data_dir = Path(data_path)
         self.cache_processed_path = Path(cache_processed_path)
@@ -20,16 +20,15 @@ class EEGLabeledDataset(Dataset):
         
         if limit is not None:
             self.needed_filenames = self.needed_filenames[:limit]
-            
-        self.chunk_length = chunk_length
-        self.chunk_stride = chunk_stride
-        self.num_chunks = num_chunks
+        
+        self.train_length = train_length
         self.pin_window = pin_window
         
-        self.cached_ids = set([int(x.name[:-3]) for x in self.cache_processed_path.glob('*.pt')]) # assume cached names are 1.pt 2.pt etc.
+        self.cached_ids = set([int(x.name[:-3]) for x in self.cache_processed_path.glob('*.pt')]) # assume cached names are 0.pt, 1.pt 2.pt etc.
+        
+        # Надо бы проверять кэш внутри инита, грузить .h5, процессить куски, нарезать и закидывать в кэш
         
         
-
     def process_data(self, data):
         """Converts numpy array of eeg data (shape (4, time_stamps)) to ready to train normalised torch tensor"""
         sos = butter(4, Wn=[4, 40], btype='bandpass', analog=False, output='sos', fs=250)
@@ -56,38 +55,27 @@ class EEGLabeledDataset(Dataset):
     def __len__(self,):
         return len(self.needed_filenames)
     
-    def chunked_length(self):
-        return (self.num_chunks - 1) * self.chunk_stride + self.chunk_length
-    
-    def pick_chunked(self, data):
-        chunked_length = self.chunked_length()
+    def pick_start(self, data):
         if self.pin_window:
             start = 0
         else:
-            assert data.shape[1] >= chunked_length, f"Not enough points in sample. Need {chunked_length}, have only {data.shape[1]}"
-            start = torch.randint(low=0, high=data.shape[1] - chunked_length + 1, size=(1,))[0]
-        return data[:, start : start + chunked_length], start
+            assert data.shape[1] >= self.train_length, f"Not enough points in sample. Need {self.train_length}, have only {data.shape[1]}"
+            start = torch.randint(low=0, high=data.shape[1] - self.train_length + 1, size=(1,))[0]
+        return data[:, start : start + self.train_length], start
         
     def __getitem__(self, index):
         if index in self.cached_ids:
             proc_data = torch.load(self.cache_processed_path / f"{index}.pt")
-            #  = torch.rand(4, 5)
         else:
             raw_data, _, meta = load_recording(self.data_dir / self.needed_filenames[index]) # data is raw eeg numpy array 
             proc_data = self.process_data(raw_data)
-            assert self.pin_window
-            
-            
             torch.save(proc_data, self.cache_processed_path / f"{index}.pt")
             self.cached_ids.add(index)
             
-        data, start_ind = self.pick_chunked(proc_data) 
-        chunked_data = turn_into_patches(data, self.chunk_length, self.chunk_stride)
-        assert chunked_data.shape[0] == self.num_chunks, f"sample should have {self.num_chunks}, got {chunked_data.shape[0]}"
+        data, start_ind = self.pick_start(proc_data) 
         return {
             # 'raw_data': raw_data,
-            'processed_data': proc_data,
-            'chunked_data': chunked_data,
+            'processed_data': data,
             'serial': index
         }
         
@@ -96,7 +84,7 @@ def collate_fn(elements):
     res = {'data': []}
     
     for el in elements:
-        res['data'].append(el['chunked_data'])
+        res['data'].append(el['processed_data'])
     res['data'] = torch.stack(res['data'])
     
     # res['sample_raw'] = elements[0]['raw_data'][0]

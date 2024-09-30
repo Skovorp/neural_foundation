@@ -5,17 +5,36 @@ import numpy as np
 from utils.training_utils import make_pretrain_mask
 from models.neural_gpt import BaseModel
 import math
+from utils.training_utils import emb_std
 # from torchtune.modules import RotaryPositionalEmbeddings
 
 class LearnedPositionalEncoding(nn.Module):
-
-    def __init__(self, emb_dim, max_len=512):
+    def __init__(self, emb_dim, max_len):
         super().__init__()
         self.embeddings = nn.Embedding(max_len, emb_dim)
 
     def forward(self, x):
         inds = torch.arange(x.size(1), device=x.device, dtype=torch.long)
         x = x + self.embeddings(inds)
+        return x
+    
+
+class ConvPositionalEncoding(nn.Module):
+    def __init__(self, emb_dim, kernel_size, groups):
+        super().__init__()
+        
+        self.conv = nn.Sequential(
+            nn.Conv1d(emb_dim, emb_dim, kernel_size=kernel_size, stride=1, padding=kernel_size // 2, groups=groups),
+            nn.GELU()
+        )
+        self.norm = nn.LayerNorm(emb_dim, elementwise_affine=False)
+        
+    def forward(self, x):
+        # x is (batch, seq_len, emb_dim)
+        x = x.permute(0, 2, 1) # (batch, channels, time)
+        x = x + self.conv(x)
+        x = x.permute(0, 2, 1) # (batch, seq_len, emb_dim)
+        x = self.norm(x)
         return x
 
 
@@ -33,30 +52,56 @@ class EncoderLinear(BaseModel):
         batch['encoder_features'] = x
         return batch
     
+class TransposeLast(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x.transpose(-2, -1)
+    
 # https://github.com/facebookresearch/fairseq/blob/main/fairseq/models/wav2vec/wav2vec2.py#L844
 class EncoderConv(BaseModel):
-    def __init__(self, emb_dim, **kwargs):
+    def __init__(self, emb_dim, norm, **kwargs):
         super().__init__()
+        assert norm in ('group', 'layer'), 'norm should be group or layer'
+        self.norm = norm
         self.stack = nn.Sequential(
-            nn.Conv1d(in_channels=4, out_channels=emb_dim, kernel_size=3, stride=3),
-            nn.GeLU(),
-            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
-            nn.GeLU(),
-            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
-            nn.GeLU(),
-            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
-            nn.GeLU(),
-            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
-            nn.GeLU(),
-            nn.Conv1d(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
-            nn.GeLU(),
+            self.make_block(in_channels=4,       out_channels=emb_dim, kernel_size=3, stride=3),
+            self.make_block(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            self.make_block(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            self.make_block(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            self.make_block(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
+            self.make_block(in_channels=emb_dim, out_channels=emb_dim, kernel_size=2, stride=2),
         )
+    
+    def make_block(self, in_channels, out_channels, kernel_size, stride):
+        if self.norm == "group":
+            return nn.Sequential(
+            nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, bias=False),
+            nn.GroupNorm(out_channels, out_channels),
+            nn.GELU(),
+        )  
+        elif self.norm == "layer":
+            # Somehow this doesnt work at all. I checked wav2vec implementation 10 times, it's the same
+            # In paper they say layernorm, but "default" mode in repo uses groupnorm and only for the first layer
+            # I cant figure it out, lets just use groupnorm
+            return nn.Sequential(
+            nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, bias=False),
+            nn.Sequential(
+                TransposeLast(),
+                nn.LayerNorm(out_channels), # normalises each embedding individually
+                TransposeLast(), 
+            ),
+            nn.GELU(),
+        )
+        assert False
+         
+        
 
     def forward(self, batch):
-        x = batch['data']
-        # x -- (batch, channels, time)
-        # batch_size, channels, time = x.shape
-        x = self.stack(x)
+        x = batch['data'] # (batch, channels, time)
+        x = self.stack(x) # (batch, more_channels, less_time)
+        x = x.permute(0, 2, 1) # (batch, num_chunks, emb_dim)
         batch['encoder_features'] = x
         return batch
     
@@ -69,7 +114,7 @@ class MyIdentity(nn.Module):
         return x.clone()
     
 class ContextNetwork(BaseModel):
-    def __init__(self, emb_dim, ffn_dim, nhead, transformer_num_layers, mask_prob, mask_length, min_masked, **kwargs):
+    def __init__(self, emb_dim, ffn_dim, nhead, transformer_num_layers, mask_prob, mask_length, min_masked, pos_kernel, pos_groups, **kwargs):
         super().__init__()
         self.mask_emb = nn.Parameter(torch.randn(emb_dim))
         self.mask_prob = mask_prob
@@ -79,10 +124,11 @@ class ContextNetwork(BaseModel):
             d_model=emb_dim, 
             dim_feedforward=ffn_dim, 
             nhead=nhead, 
-            norm_first=True)
+            norm_first=True,
+            batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers, enable_nested_tensor=False)
-        self.target_proj = MyIdentity() # nn.Linear(emb_dim, emb_dim) # FIXME mean of target is bigger that
-        self.positional_emb = LearnedPositionalEncoding(emb_dim)
+        self.target_proj = nn.Linear(emb_dim, emb_dim) 
+        self.positional_emb = ConvPositionalEncoding(emb_dim, pos_kernel, pos_groups)
 
     def forward(self, batch):
         x = batch['encoder_features'].clone()
@@ -147,9 +193,14 @@ def calc_loss_proper(batch, temp, num_negatives):
     unreduced_loss = F.cross_entropy(sims, ce_target, reduction='none')
     
     batch['per_masktoken_loss'] = unreduced_loss
-    batch['loss'] = unreduced_loss.mean() 
     
-    batch['loss'] = batch['loss'] - (batch['targets'] ** 2).mean() * 0.01
+    # avg = batch['targets'].mean((0, 1), keepdim=True)
+    # avg = batch['targets'].mean(1, keepdim=True)
+    # penalty = ((batch['targets'] - avg) ** 2).mean()
+    # penalty = (batch['targets'] ** 2).mean()
+    
+    batch['loss'] = unreduced_loss.mean() # + calc_self_entropy(batch['targets'].clone())
+    
     
     with torch.no_grad():
         assert sims.argmax(1).shape == (batch_size, num_masked)
@@ -161,3 +212,12 @@ def calc_loss_proper(batch, temp, num_negatives):
 
 # WHY switching to identity worsened results?
 # smaller variance? targets are too close to eachother? its not like sound?
+
+
+def calc_self_entropy(x):
+    x = x / torch.norm(x, dim=1, keepdim=True)
+    bs, n, _ = x.shape
+    sim = x @ x.transpose(1, 2)
+    diag_inf = torch.diagflat(torch.tile(torch.tensor(torch.inf, device=x.device), [n])).unsqueeze(0)
+    q = torch.nn.functional.softmax(sim - diag_inf, dim=1) 
+    return (torch.log(q + 1e-5) * q).mean()

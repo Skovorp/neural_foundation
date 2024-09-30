@@ -2,6 +2,9 @@ import numpy as np
 from torch import nn
 import torch
 import math
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib.pyplot as plt
+from utils.data_utils import fig2img
 
 
 def benchmark_previous(encoder_res):
@@ -34,6 +37,10 @@ def benchmark_cumsum(encoder_res):
 
 
 def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length, min_masked):
+    if min_masked * 2 != num_chunks:
+        print(f"WARNING!!! masking not 50%. min_masked: {min_masked}, num_chunks: {num_chunks}")
+    assert mask_length > 0
+    
     mask = 1 * (torch.rand(batch_size, num_chunks) < mask_prob)
         
     mask[:, mask_length:] = mask[:, mask_length:] - mask[:, : -mask_length]
@@ -59,7 +66,6 @@ def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length, min_maske
                 diff_num_mask[i] += 1
             j = (j + 1) % num_chunks
     assert (diff_num_mask == 0).all(), "Mask failed, different count of masked tokens in sequences"
-    # print(mask.sum(1))
     assert (mask.sum(1) == min_masked).all()
     return mask
 
@@ -99,3 +105,78 @@ def warn_one_batch(is_one_batch):
             print("💀💀💀💀💀💀💀💀💀💀💀💀💀💀 THIS IS ONE BATCH TEST 💀💀💀💀💀💀💀💀💀💀💀💀💀💀")
         else:
             print("🚨🚨🚨 REAL RUN 🚨🚨🚨")
+            
+
+def info_about_training(dataset, loader, encoder, context_network, cfg, device):
+    sample_batch = next(iter(loader))
+    print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0]['processed_data'].shape}")   
+    print("Shape of sample batch:", sample_batch['data'].shape)
+    print(f"Total length of segment: {sample_batch['sample_processed'].shape[0] / 250:.2f}s") 
+    
+    print(f"Encoder:\n{encoder}")
+    print(f"ContextNetwork:\n{context_network}")
+    # print(f"% tokens masked every batch: {100 * context_network.avg_part_masked(sample_batch['data']):.2f}%")
+    loss_benches = best_ce_loss(cfg['context_network']['num_negatives'], cfg['context_network']['temp'])
+    print(f"Optimal loss for orthogonal distractors: {loss_benches['ort_best_loss']:.3f}")
+    print(f"Optimal loss for inverse distractors:    {loss_benches['inverse_best_loss']:.3f}")
+    
+    sample_batch['data'] = sample_batch['data'].to(device=device, dtype=torch.float32)
+    sample_batch = encoder(sample_batch)
+    
+    print("Encoder output shape:", sample_batch['encoder_features'].shape)
+    
+    
+def plot_sim_image(targets, contexts, masks):
+    assert targets.shape == contexts.shape and len(masks.shape) == 1 and len(targets.shape) == 2
+
+    with torch.no_grad():
+        targets = targets / torch.norm(targets, dim=1, keepdim=True)
+        contexts = contexts / torch.norm(contexts, dim=1, keepdim=True)
+        sims = (contexts @ targets.T).detach().cpu()
+        masks = masks.detach().cpu()    
+    
+    # weird GPT plotting code, very brittle! dont touch
+    fig, ax = plt.subplots(1, 2, gridspec_kw={'width_ratios': [10, 1]}, figsize=(8.2, 6), sharey=True)
+
+    divider = make_axes_locatable(ax[0])
+    cax = divider.append_axes("left", size="5%", pad=0.7)
+    cax.set_xlabel("sims")
+
+    im = ax[0].imshow(sims)
+    fig.colorbar(im, cax=cax)  # Place the colorbar on the left
+    cax.yaxis.set_ticks_position('left')  # Ensure the ticks are on the left
+    ax[0].set_xlabel("Targets")
+    ax[0].set_ylabel("Contexts")
+    mask_colors = np.where(masks, 1, 0)  # True becomes 1 (blue), False becomes 0 (white)
+    ax[1].imshow(mask_colors[:, None], cmap='Blues', aspect='auto')  # Single column mask
+    ax[1].set_xticks([])  
+    ax[1].set_yticks([])  
+    ax[1].set_xlabel("Blue=mask")
+    plt.tight_layout()
+    
+    fig.canvas.draw()
+    res = fig2img(fig)
+    plt.close()
+    return res
+
+
+def plot_pca(targets, contexts, masks):
+    assert targets.shape == contexts.shape and len(masks.shape) == 1 and len(targets.shape) == 2
+    
+    with torch.no_grad():
+        cat_vecs = torch.cat([contexts.detach().cpu(), targets.detach().cpu()], 0)
+        cat_vecs = cat_vecs / torch.norm(cat_vecs, dim=1, keepdim=True)
+        u, _, _ = torch.pca_lowrank(cat_vecs, q=2)
+        msk = masks.cpu().detach()
+
+    cont_2d = u[:msk.shape[0], :]
+    tgt_2d = u[msk.shape[0]:, :]
+    plt.scatter(cont_2d[msk, 0], cont_2d[msk, 1], c='r', alpha=0.1, label='Masked Context')
+    plt.scatter(cont_2d[~msk, 0], cont_2d[~msk, 1], c='b', alpha=0.1, label='Visible Context')
+    plt.scatter(tgt_2d[:, 0], tgt_2d[:, 1], c='g', alpha=0.1, label='Targets')
+    plt.legend()
+    plt.title('PCA of context + targets')
+    plt.gcf().canvas.draw()
+    res = fig2img(plt.gcf())
+    plt.close()
+    return res
