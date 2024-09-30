@@ -4,29 +4,50 @@ from torch.utils.data import Dataset
 from pathlib import Path
 import pandas as pd
 from scipy.signal import butter, sosfilt
+from tqdm import tqdm
 
 from utils.data_utils import load_recording, turn_into_patches
 
 
 class EEGLabeledDataset(Dataset):
-    def __init__(self, data_path, limit, train_length, pin_window, cache_processed_path, **kwargs):
+    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, rebuild_cache=True, **kwargs):
         super().__init__()
         self.data_dir = Path(data_path)
         self.cache_processed_path = Path(cache_processed_path)
-        
-        # data is not processed, aka stored as raw eeg .h5 files
         self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet')
-        self.needed_filenames = self.metadata.sort_values(by='filename_h5')['filename_h5'].to_list()
-        
-        if limit is not None:
-            self.needed_filenames = self.needed_filenames[:limit]
-        
+        self.available_filenames = self.metadata.sort_values(by='filename_h5')['filename_h5'].to_list()
         self.train_length = train_length
-        self.pin_window = pin_window
         
-        self.cached_ids = set([int(x.name[:-3]) for x in self.cache_processed_path.glob('*.pt')]) # assume cached names are 0.pt, 1.pt 2.pt etc.
+        assert dataset_mode in ('beginning_from_each', 'intersecting_from_one'), 'bad dataset_mode'
+        self.dataset_mode = dataset_mode
         
-        # Надо бы проверять кэш внутри инита, грузить .h5, процессить куски, нарезать и закидывать в кэш
+        if rebuild_cache:
+            [f.unlink() for f in self.cache_processed_path.glob("*")] 
+        
+        self.cached_ids = self.get_cached_ids()
+        if len(self.cached_ids) == 0:
+            print("Building cache...")
+            self.prepare_cache()
+            self.cached_ids = self.get_cached_ids()
+         
+    def prepare_cache(self, ):
+        if self.dataset_mode == "beginning_from_each":
+            for i in tqdm(range(len(self.available_filenames)), desc='One chunk from each file'):
+                raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[i]) # data is raw eeg numpy array 
+                proc_data = self.process_data(raw_data)
+                proc_data = proc_data[:, :self.train_length]
+                torch.save(proc_data, self.cache_processed_path / f"{i}.pt")
+        elif self.dataset_mode == "intersecting_from_one":
+            raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[0])
+            proc_data = self.process_data(raw_data)
+            for i in range(20):
+                start = (self.train_length / 10) * i
+                chunk = proc_data[:, start : start + self.train_length]
+                torch.save(chunk, self.cache_processed_path / f"{i}.pt")
+    
+    def get_cached_ids(self, ):
+        # assume cached names are 0.pt, 1.pt 2.pt etc.
+        return set([int(x.name[:-3]) for x in self.cache_processed_path.glob('*.pt')]) 
         
         
     def process_data(self, data):
@@ -48,47 +69,31 @@ class EEGLabeledDataset(Dataset):
         
         data = torch.clip(data, -1e-4, 1e-4)
 
+        return data
+    
+    
+    def __len__(self,):
+        return len(self.cached_ids)
+    
+    def normalize_data(self, data):
         data = data - data.mean(1, keepdim=True)
         data = data / ((data ** 2).mean() ** 0.5)
         return data
     
-    def __len__(self,):
-        return len(self.needed_filenames)
-    
-    def pick_start(self, data):
-        if self.pin_window:
-            start = 0
-        else:
-            assert data.shape[1] >= self.train_length, f"Not enough points in sample. Need {self.train_length}, have only {data.shape[1]}"
-            start = torch.randint(low=0, high=data.shape[1] - self.train_length + 1, size=(1,))[0]
-        return data[:, start : start + self.train_length], start
-        
     def __getitem__(self, index):
         if index in self.cached_ids:
-            proc_data = torch.load(self.cache_processed_path / f"{index}.pt")
+            data = torch.load(self.cache_processed_path / f"{index}.pt")
+            data = self.normalize_data(data)
+            return {'data': data}
         else:
-            raw_data, _, meta = load_recording(self.data_dir / self.needed_filenames[index]) # data is raw eeg numpy array 
-            proc_data = self.process_data(raw_data)
-            torch.save(proc_data, self.cache_processed_path / f"{index}.pt")
-            self.cached_ids.add(index)
-            
-        data, start_ind = self.pick_start(proc_data) 
-        return {
-            # 'raw_data': raw_data,
-            'processed_data': data,
-            'serial': index
-        }
+            raise Exception("bad ind")
         
         
 def collate_fn(elements):
     res = {'data': []}
     
     for el in elements:
-        res['data'].append(el['processed_data'])
+        res['data'].append(el['data'])
     res['data'] = torch.stack(res['data'])
-    
-    # res['sample_raw'] = elements[0]['raw_data'][0]
-    res['sample_processed'] = elements[0]['processed_data'][0]
-    res['serial'] = [el['serial'] for el in elements]
     return res
 

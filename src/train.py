@@ -37,7 +37,7 @@ if __name__ == "__main__":
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        # mode='disabled'
+        mode='disabled'
     )
     
     device = torch.device('mps')
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     encoder = EncoderConv(**cfg['encoder']).to(device)
     context_network = ContextNetwork(**cfg['context_network']).to(device)
     info_about_training(dataset, loader, encoder, context_network, cfg, device)
-    warn_one_batch(cfg['data']['pin_window'])
+    warn_one_batch(cfg['data']['dataset_mode'] != "full")
     
     optimizer = torch.optim.Adam(
         list(encoder.parameters()) + list(context_network.parameters()),

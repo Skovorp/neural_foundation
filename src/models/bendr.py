@@ -9,7 +9,7 @@ from utils.training_utils import emb_std
 # from torchtune.modules import RotaryPositionalEmbeddings
 
 class LearnedPositionalEncoding(nn.Module):
-    def __init__(self, emb_dim, max_len):
+    def __init__(self, emb_dim, max_len, **kwargs):
         super().__init__()
         self.embeddings = nn.Embedding(max_len, emb_dim)
 
@@ -20,7 +20,7 @@ class LearnedPositionalEncoding(nn.Module):
     
 
 class ConvPositionalEncoding(nn.Module):
-    def __init__(self, emb_dim, kernel_size, groups):
+    def __init__(self, emb_dim, kernel_size, groups, **kwargs):
         super().__init__()
         
         self.conv = nn.Sequential(
@@ -114,7 +114,7 @@ class MyIdentity(nn.Module):
         return x.clone()
     
 class ContextNetwork(BaseModel):
-    def __init__(self, emb_dim, ffn_dim, nhead, transformer_num_layers, mask_prob, mask_length, min_masked, pos_kernel, pos_groups, **kwargs):
+    def __init__(self, emb_dim, ffn_dim, nhead, transformer_num_layers, mask_prob, mask_length, min_masked, pe, **kwargs):
         super().__init__()
         self.mask_emb = nn.Parameter(torch.randn(emb_dim))
         self.mask_prob = mask_prob
@@ -128,7 +128,13 @@ class ContextNetwork(BaseModel):
             batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers, enable_nested_tensor=False)
         self.target_proj = nn.Linear(emb_dim, emb_dim) 
-        self.positional_emb = ConvPositionalEncoding(emb_dim, pos_kernel, pos_groups)
+        
+        if pe['type'] == "conv":
+            self.positional_emb = ConvPositionalEncoding(emb_dim, **pe)
+        elif pe['type'] == "learned":
+            self.positional_emb = LearnedPositionalEncoding(emb_dim, **pe)
+        else:
+            assert False, "bad pe['type']"
 
     def forward(self, batch):
         x = batch['encoder_features'].clone()

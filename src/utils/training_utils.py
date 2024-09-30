@@ -109,9 +109,9 @@ def warn_one_batch(is_one_batch):
 
 def info_about_training(dataset, loader, encoder, context_network, cfg, device):
     sample_batch = next(iter(loader))
-    print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0]['processed_data'].shape}")   
+    print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0]['data'].shape}")   
     print("Shape of sample batch:", sample_batch['data'].shape)
-    print(f"Total length of segment: {sample_batch['sample_processed'].shape[0] / 250:.2f}s") 
+    print(f"Total length of segment: {sample_batch['data'].shape[1] / 250:.2f}s") 
     
     print(f"Encoder:\n{encoder}")
     print(f"ContextNetwork:\n{context_network}")
