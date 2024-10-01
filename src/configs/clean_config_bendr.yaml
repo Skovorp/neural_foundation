@@ -2,7 +2,8 @@ data:
   data_path: /Users/ksc/Desktop/Нейротемка/code_local/Уточнение психофизиологических состояний 2023/3_Усталость и сильная усталость/data
   cache_processed_path: /Users/ksc/Desktop/Нейротемка/code_local/Уточнение психофизиологических состояний 2023/3_Усталость и сильная усталость/cache
   train_length: 73800 # just less than 5min, produces 768 chunks
-  dataset_mode: "beginning_from_each"
+  dataset_mode: "full"
+  rebuild_cache: false
   batch_size: 2
   num_workers: 2
   persistent_workers: true
@@ -24,7 +25,9 @@ context_network:
     # type: 'conv'
     # kernel_size: 127
     # groups: 16
-    type: "learned"
+    # type: "learned"
+    # max_len: 1000
+    type: 'sin'
     max_len: 1000
 optimizer:
   lr: 3.0e-4
@@ -32,7 +35,7 @@ optimizer:
 scheduler:
   part_warmup_steps: 0.05
 training:
-  num_epochs: 150
+  num_epochs: 10
   heavy_logs_every: 10
 save: 
   dir: /Users/ksc/Desktop/Нейротемка/code_local/neural_foundation/src/checkpoints

@@ -12,10 +12,34 @@ class LearnedPositionalEncoding(nn.Module):
     def __init__(self, emb_dim, max_len, **kwargs):
         super().__init__()
         self.embeddings = nn.Embedding(max_len, emb_dim)
+        self.norm = nn.LayerNorm(emb_dim, elementwise_affine=False)
 
     def forward(self, x):
         inds = torch.arange(x.size(1), device=x.device, dtype=torch.long)
-        x = x + self.embeddings(inds)
+        x = x + self.embeddings(inds).unsqueeze(0)
+        x = self.norm(x)
+        return x
+    
+
+class SinusoidalPositionalEncoding(nn.Module):
+    def __init__(self, emb_dim, max_len, **kwargs):
+        super().__init__()
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, emb_dim, 2).float() * (-math.log(10000.0) / emb_dim))
+        
+        # Initialize positional encoding using sin for even indices and cos for odd indices
+        pe = torch.zeros(max_len, emb_dim)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        
+        # Register the buffer to ensure it's not trainable
+        self.pe = nn.Parameter(pe, requires_grad=False)
+        self.norm = nn.LayerNorm(emb_dim, elementwise_affine=False)
+
+    def forward(self, x):
+        # Add positional encoding to input tensor x (batch_size, seq_len, emb_dim)
+        x = x + self.pe[:x.size(1)].unsqueeze(0).to(x.device)
+        x = self.norm(x)
         return x
     
 
@@ -133,6 +157,8 @@ class ContextNetwork(BaseModel):
             self.positional_emb = ConvPositionalEncoding(emb_dim, **pe)
         elif pe['type'] == "learned":
             self.positional_emb = LearnedPositionalEncoding(emb_dim, **pe)
+        elif pe['type'] == 'sin':
+            self.positional_emb = SinusoidalPositionalEncoding(emb_dim, **pe)
         else:
             assert False, "bad pe['type']"
 

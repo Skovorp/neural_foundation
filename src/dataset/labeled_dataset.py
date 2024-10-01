@@ -10,7 +10,7 @@ from utils.data_utils import load_recording, turn_into_patches
 
 
 class EEGLabeledDataset(Dataset):
-    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, rebuild_cache=True, **kwargs):
+    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, limit=None, rebuild_cache=True, **kwargs):
         super().__init__()
         self.data_dir = Path(data_path)
         self.cache_processed_path = Path(cache_processed_path)
@@ -18,7 +18,7 @@ class EEGLabeledDataset(Dataset):
         self.available_filenames = self.metadata.sort_values(by='filename_h5')['filename_h5'].to_list()
         self.train_length = train_length
         
-        assert dataset_mode in ('beginning_from_each', 'intersecting_from_one'), 'bad dataset_mode'
+        assert dataset_mode in ('beginning_from_each', 'intersecting_from_one', 'full'), 'bad dataset_mode'
         self.dataset_mode = dataset_mode
         
         if rebuild_cache:
@@ -29,6 +29,9 @@ class EEGLabeledDataset(Dataset):
             print("Building cache...")
             self.prepare_cache()
             self.cached_ids = self.get_cached_ids()
+            
+        if limit is not None:
+            self.cached_ids = set(list(self.cached_ids)[:limit])
          
     def prepare_cache(self, ):
         if self.dataset_mode == "beginning_from_each":
@@ -40,10 +43,24 @@ class EEGLabeledDataset(Dataset):
         elif self.dataset_mode == "intersecting_from_one":
             raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[0])
             proc_data = self.process_data(raw_data)
-            for i in range(20):
-                start = (self.train_length / 10) * i
+            for i in tqdm(range(40), desc="40 chunks from 100min of first file"):
+                start = (self.train_length // 2) * i
                 chunk = proc_data[:, start : start + self.train_length]
                 torch.save(chunk, self.cache_processed_path / f"{i}.pt")
+        elif self.dataset_mode == "full":
+            numel = 0
+            for i in tqdm(range(len(self.available_filenames)), desc='Chunks from each file without intersection'):
+                raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[i]) # data is raw eeg numpy array 
+                proc_data = self.process_data(raw_data)
+                j = 0
+                while True:
+                    start = (self.train_length) * j
+                    chunk = proc_data[:, start : start + self.train_length]
+                    if chunk.shape[1] != self.train_length:
+                        break
+                    torch.save(chunk.detach().clone(), self.cache_processed_path / f"{numel}.pt")
+                    j += 1
+                    numel += 1
     
     def get_cached_ids(self, ):
         # assume cached names are 0.pt, 1.pt 2.pt etc.
@@ -64,7 +81,7 @@ class EEGLabeledDataset(Dataset):
         sos = butter(3, Wn=[83.3 - 5, 83.3 + 5], btype='bandstop', analog=False, output='sos', fs=250)
         data = sosfilt(sos, data)
         
-        data = torch.tensor(data)
+        data = torch.tensor(data, dtype=torch.float32)
         data = data[:, 500:-500]
         
         data = torch.clip(data, -1e-4, 1e-4)
