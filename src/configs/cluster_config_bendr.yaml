@@ -36,6 +36,7 @@ optimizer:
 scheduler:
   part_warmup_steps: 0.05
 training:
+  device: "cuda"
   num_epochs: 10
   heavy_logs_every: 10
 save: 

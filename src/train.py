@@ -40,7 +40,7 @@ if __name__ == "__main__":
         mode='disabled'
     )
     
-    device = torch.device('mps')
+    device = torch.device(cfg['training']['device'])
     
     dataset = EEGLabeledDataset(**cfg['data'])
     loader = DataLoader(dataset, cfg['data']['batch_size'], num_workers=cfg['data']['num_workers'], 
