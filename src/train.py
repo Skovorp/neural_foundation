@@ -10,6 +10,7 @@ from tqdm import tqdm
 import wandb
 import numpy as np
 from datetime import datetime
+import os
 
 # import lovely_tensors as lt
 # lt.monkey_patch()
@@ -32,18 +33,18 @@ load_dotenv()
 
 
 if __name__ == "__main__":
-    with open('configs/clean_config_bendr.yaml', 'r') as file:
+    with open('configs/cluster_config_bendr.yaml', 'r') as file:
         cfg = yaml.safe_load(file)
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        mode='disabled'
+        # mode='disabled'
     )
     
     device = torch.device(cfg['training']['device'])
     
     dataset = EEGLabeledDataset(**cfg['data'])
-    loader = DataLoader(dataset, cfg['data']['batch_size'], num_workers=cfg['data']['num_workers'], 
+    loader = DataLoader(dataset, cfg['data']['batch_size'], num_workers=len(os.sched_getaffinity(0)), 
                         persistent_workers=cfg['data']['persistent_workers'],
                         shuffle=False, drop_last=True, collate_fn=collate_fn)
     encoder = EncoderConv(**cfg['encoder']).to(device)

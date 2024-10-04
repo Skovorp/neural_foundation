@@ -14,8 +14,8 @@ class EEGLabeledDataset(Dataset):
         super().__init__()
         self.data_dir = Path(data_path)
         self.cache_processed_path = Path(cache_processed_path)
-        self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet')
-        self.available_filenames = self.metadata.sort_values(by='filename_h5')['filename_h5'].to_list()
+        self.metadata = pd.read_parquet(self.data_dir / 'metadata.parquet') if (self.data_dir / 'metadata.parquet').exists() else None
+        self.available_filenames = self.metadata.sort_values(by='filename_h5')['filename_h5'].to_list() if self.metadata is not None else None
         self.train_length = train_length
         
         assert dataset_mode in ('beginning_from_each', 'intersecting_from_one', 'full'), 'bad dataset_mode'
@@ -34,6 +34,7 @@ class EEGLabeledDataset(Dataset):
             self.cached_ids = set(list(self.cached_ids)[:limit])
          
     def prepare_cache(self, ):
+        assert self.available_filenames is not None, "self.available_filenames is None"
         if self.dataset_mode == "beginning_from_each":
             for i in tqdm(range(len(self.available_filenames)), desc='One chunk from each file'):
                 raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[i]) # data is raw eeg numpy array 
