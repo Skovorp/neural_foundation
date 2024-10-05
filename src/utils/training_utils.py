@@ -111,7 +111,7 @@ def info_about_training(dataset, loader, encoder, context_network, cfg, device):
     sample_batch = next(iter(loader))
     print(f"Dataset length: {len(dataset)}. Shape of first: {dataset[0]['data'].shape}")   
     print("Shape of sample batch:", sample_batch['data'].shape)
-    print(f"Total length of segment: {sample_batch['data'].shape[1] / 250:.2f}s") 
+    print(f"Total length of segment: {sample_batch['data'].shape[2] / 250:.2f}s") 
     
     print(f"Encoder:\n{encoder}")
     print(f"ContextNetwork:\n{context_network}")
@@ -180,3 +180,6 @@ def plot_pca(targets, contexts, masks):
     res = fig2img(plt.gcf())
     plt.close()
     return res
+
+def mn(x):
+    return sum(x) / len(x)

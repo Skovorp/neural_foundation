@@ -16,9 +16,12 @@ def load_recording(path_to_h5):
         eeg data: np.array of type np.float32 with shape (4, X)"
         metadata: dict
     """
+    path_to_h5 = str(path_to_h5)
+    path_to_h5 = path_to_h5 if path_to_h5[-3:] == ".h5" else path_to_h5 + '.h5'
     with h5py.File(path_to_h5, "r") as f:
-        assert list(f.keys()) == ['eeg4_datasetName'] or list(f.keys()) == ['eeg4_datasetName', 'ppg1_datasetName'], f"expected structure to be ['eeg4_datasetName'], got {f.keys()}"
-        # ppg1_datasetName is heartrate data that's recorder every 10ms and not 4ms like eeg -- i just ignore it
+        assert 'eeg4_datasetName' in list(f.keys()), f"No eeg4_datasetName in h5 keys: {f.keys()}"
+        # ppg1_datasetName is heartrate data that's recorded every 10ms and not 4ms like eeg -- i just ignore it
+        # also can have gyroscope3_datasetName, accelerometer3_datasetName
         data = f['eeg4_datasetName']
         data_dtype = np.dtype([('timestamp_name', '<u4'), ('eeg1_name', '<f4'), ('eeg2_name', '<f4'), ('eeg3_name', '<f4'), ('eeg4_name', '<f4')])
         assert data.dtype == data_dtype, f"expected dtype to be {data_dtype}, got {data.dtype}"

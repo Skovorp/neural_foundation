@@ -1,12 +1,27 @@
-data:
-  data_path: /home/ps5359/data/exp_3/h5
-  cache_processed_path: /home/ps5359/data/exp_3/cache
-  train_length: 73800 # just less than 5min, produces 768 chunks
+data_train:
+  data_path: /home/ps5359/data/train_clean/h5
+  cache_processed_path: /home/ps5359/data/train_clean/cache
+  train_length: 73728 
   dataset_mode: "full"
-  rebuild_cache: false
-  limit: null
   batch_size: 32
+  rebuild_cache: true
+  limit: null
   persistent_workers: true
+  target_config: 
+    user_id: False
+    activity: False
+data_val:
+  data_path: /home/ps5359/data/val_clean/h5
+  cache_processed_path: /home/ps5359/data/val_clean/cache
+  train_length: 73728 
+  dataset_mode: "full"
+  batch_size: 32
+  rebuild_cache: true
+  limit: null
+  persistent_workers: true
+  target_config: 
+    user_id: True
+    activity: False
 encoder:
   # inp_size: 1000 # 4 * 500
   emb_dim: 512
@@ -35,4 +50,4 @@ training:
   heavy_logs_every: 30
 save: 
   dir: /home/ps5359/checkpoints
-  every: 25
+  every: 200

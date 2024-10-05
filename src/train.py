@@ -1,6 +1,6 @@
-from dataset.labeled_dataset import EEGLabeledDataset, collate_fn
+from dataset.labeled_dataset import EEGLabeledDataset
 from models.bendr import EncoderConv, ContextNetwork, calc_loss_proper
-from utils.training_utils import emb_std, emb_mean, warn_one_batch, info_about_training, plot_pca, plot_sim_image
+from utils.training_utils import emb_std, emb_mean, warn_one_batch, info_about_training, plot_pca, plot_sim_image, mn
 
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import SequentialLR, LinearLR
@@ -43,30 +43,37 @@ if __name__ == "__main__":
     
     device = torch.device(cfg['training']['device'])
     
-    dataset = EEGLabeledDataset(**cfg['data'])
-    loader = DataLoader(dataset, cfg['data']['batch_size'], num_workers=len(os.sched_getaffinity(0)), 
-                        persistent_workers=cfg['data']['persistent_workers'],
-                        shuffle=False, drop_last=True, collate_fn=collate_fn)
+    num_cpu = len(os.sched_getaffinity(0))
+    train_set = EEGLabeledDataset(**cfg['data_train'])
+    train_loader = DataLoader(train_set, cfg['data_train']['batch_size'], num_workers=num_cpu, 
+                        persistent_workers=cfg['data_train']['persistent_workers'],
+                        shuffle=True, drop_last=True)
+    val_set = EEGLabeledDataset(**cfg['data_val'])
+    val_loader = DataLoader(val_set, cfg['data_val']['batch_size'], num_workers=num_cpu, 
+                    persistent_workers=cfg['data_val']['persistent_workers'],
+                    shuffle=False, drop_last=False)
+    
     encoder = EncoderConv(**cfg['encoder']).to(device)
     context_network = ContextNetwork(**cfg['context_network']).to(device)
-    info_about_training(dataset, loader, encoder, context_network, cfg, device)
-    warn_one_batch(cfg['data']['dataset_mode'] != "full")
+    info_about_training(train_set, train_loader, encoder, context_network, cfg, device)
+    warn_one_batch(cfg['data_val']['dataset_mode'] != "full")
     
     optimizer = torch.optim.Adam(
         list(encoder.parameters()) + list(context_network.parameters()),
         **cfg['optimizer']
     )
     
-    total_steps = len(loader) * cfg['training']['num_epochs']
+    total_steps = len(train_loader) * cfg['training']['num_epochs']
     warmup_steps = int(cfg['scheduler']['part_warmup_steps'] * total_steps)
     warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1, total_iters=warmup_steps)
     other_scheduler = LinearLR(optimizer, start_factor=1, end_factor=1e-6, total_iters=total_steps - warmup_steps)
     scheduler = SequentialLR(optimizer, [warmup_scheduler, other_scheduler], milestones=[warmup_steps])
     
     for epoch_num in range(1, cfg['training']['num_epochs'] + 1):
-        pbar = tqdm(loader)
-        losses = []
-        accs = []
+        pbar = tqdm(train_loader)
+        train_losses, train_accs = [], []
+        encoder.train()
+        context_network.train()
         for batch_idx, batch in enumerate(pbar):
             optimizer.zero_grad()
             batch['data'] = batch['data'].to(device, dtype=torch.float32)
@@ -79,12 +86,12 @@ if __name__ == "__main__":
             optimizer.step()
             scheduler.step()
             
-            losses.append(batch['loss'].item())
-            accs.append(batch['acc_feature_choice'].item())
+            train_losses.append(batch['loss'].item())
+            train_accs.append(batch['acc_feature_choice'].item())
             
-            pbar.set_description(f"loss: {batch['loss'].item():.5f} acc: {100 * batch['acc_feature_choice'].item():.2f}%")
+            # pbar.set_description(f"Train {epoch_num} | loss: {batch['loss'].item():.5f} acc: {100 * batch['acc_feature_choice'].item():.2f}%")
             
-            if cfg['training']['heavy_logs_every'] != -1 and ((epoch_num - 1) * len(loader) + batch_idx) % cfg['training']['heavy_logs_every'] == 0:
+            if cfg['training']['heavy_logs_every'] != -1 and ((epoch_num - 1) * len(train_loader) + batch_idx) % cfg['training']['heavy_logs_every'] == 0:
                 wandb.log({
                     'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512),
                     'target_hist': wandb.Histogram(batch['targets'].detach().cpu().numpy(), num_bins=512),
@@ -100,7 +107,7 @@ if __name__ == "__main__":
             
             wandb.log({
                 'step_loss': batch['loss'].item(),
-                'step_acc_feature_choice': batch['acc_feature_choice'].item(),
+                'step_acc': batch['acc_feature_choice'].item(),
                 'mean_correct_sim': batch['mean_correct_sim'].item(),
                 'mean_destractor_sim': batch['mean_destractor_sim'].item(),
                 'lr': scheduler.get_last_lr()[0],
@@ -114,16 +121,33 @@ if __name__ == "__main__":
                 'context_mean': emb_mean(batch['context_vectors']),
                 # 'batch_partnnnn_clipped': calc_part_clipped(batch['data']) -- how to calc after normalisation????
             })
+            pbar.set_description(f"Train {epoch_num:>3} loss: {batch['loss'].item():.5f} avg loss: {mn(train_losses):.5f} avg acc: {100 * mn(train_accs):.2f}%")
             
+        pbar = tqdm(val_loader)
+        val_losses, val_accs, seen_els = [], [], 0.0
+        encoder.eval()
+        context_network.eval()
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(pbar):
+                batch['data'] = batch['data'].to(device, dtype=torch.float32)
             
+                batch = encoder(batch)
+                batch = context_network(batch)
+                batch = calc_loss_proper(batch, cfg['context_network']['temp'],  cfg['context_network']['num_negatives'])
+                val_losses.append(batch['loss'].item() * batch['data'].size(0))
+                val_accs.append(batch['acc_feature_choice'].item() * batch['data'].size(0))
+                seen_els += batch['data'].size(0)
+                pbar.set_description(f"Val   {epoch_num:>3} loss: {batch['loss'].item():.5f} avg loss: {sum(val_losses) / seen_els:.5f} avg acc: {100 * sum(val_accs) / seen_els:.2f}%")
+        
         if epoch_num % cfg['save']['every'] == 0:
             torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{datetime.now().isoformat()}.pt")
             torch.save(context_network.state_dict(), f"{cfg['save']['dir']}/context_network_{datetime.now().isoformat()}.pt")
             
-        print(f"\tEpoch {epoch_num:>3} average loss: {sum(losses) / len(losses):.5f} average acc: {100 * sum(accs) / len(accs):.2f}%")
         wandb.log({
-            'epoch_loss': sum(losses) / len(losses),
-            'epoch_acc_feature_choice': sum(accs) / len(accs)
+            'epoch_loss': mn(train_losses),
+            'epoch_acc': mn(train_accs),
+            'epoch_loss_val': sum(val_losses) / seen_els,
+            'epoch_acc_val': sum(val_accs) / seen_els,
         }, commit=False)
 
 wandb.finish()
