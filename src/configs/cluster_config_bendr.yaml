@@ -1,6 +1,6 @@
 data_train:
-  data_path: /home/ps5359/data/train_clean/h5
-  cache_processed_path: /home/ps5359/data/train_clean/cache
+  data_path: /home/ps5359/data/1k/h5
+  cache_processed_path: /home/ps5359/data/1k/cache
   train_length: 73728 
   dataset_mode: "full"
   batch_size: 32
@@ -10,9 +10,10 @@ data_train:
   target_config: 
     user_id: False
     activity: False
+  clipped_threshold: 0.3 
 data_val:
-  data_path: /home/ps5359/data/val_clean/h5
-  cache_processed_path: /home/ps5359/data/val_clean/cache
+  data_path: /home/ps5359/data/full_clean/h5
+  cache_processed_path: /home/ps5359/data/full_clean/cache
   train_length: 73728 
   dataset_mode: "full"
   batch_size: 32
@@ -22,6 +23,7 @@ data_val:
   target_config: 
     user_id: True
     activity: False
+  clipped_threshold: 100
 encoder:
   # inp_size: 1000 # 4 * 500
   emb_dim: 512
@@ -41,7 +43,7 @@ context_network:
     max_len: 1000
 optimizer:
   lr: 3.0e-4
-  weight_decay: 0 # 1.0e-2
+  weight_decay: 1.0e-2
 scheduler:
   part_warmup_steps: 0.05
 training:

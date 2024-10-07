@@ -149,7 +149,8 @@ class ContextNetwork(BaseModel):
             dim_feedforward=ffn_dim, 
             nhead=nhead, 
             norm_first=True,
-            batch_first=True)
+            batch_first=True,
+            activation='gelu')
         self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers=transformer_num_layers, enable_nested_tensor=False)
         self.target_proj = nn.Linear(emb_dim, emb_dim) 
         

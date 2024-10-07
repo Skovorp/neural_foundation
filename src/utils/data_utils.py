@@ -108,10 +108,10 @@ def plot_first_n(data, n=1000):
     plt.close()
     return res
 
-def calc_part_clipped(data, clip_val):
+@torch.no_grad()
+def calc_percent_clipped(data, clip_val):
     abs_data = data.abs()
-    max_val = abs_data.max()
-    part_clipped = (abs_data > (max_val - 0.01)).sum().item()
+    part_clipped = (abs_data == clip_val).sum().item() * 100.0
     part_clipped = part_clipped / torch.numel(data)
     return part_clipped
 

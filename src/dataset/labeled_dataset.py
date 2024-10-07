@@ -6,11 +6,11 @@ import pandas as pd
 from scipy.signal import butter, sosfilt
 from tqdm import tqdm
 
-from utils.data_utils import load_recording, turn_into_patches
+from utils.data_utils import load_recording, turn_into_patches, calc_percent_clipped
 
 
 class EEGLabeledDataset(Dataset):
-    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, target_config, limit=None, rebuild_cache=True, **kwargs):
+    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, target_config, clipped_threshold, limit=None, rebuild_cache=True, **kwargs):
         super().__init__()
         self.none_user_id = -100
         self.num_user_ids = None
@@ -22,6 +22,8 @@ class EEGLabeledDataset(Dataset):
         self.available_filenames = self.metadata.sort_values(by='filename_h5')['filename_h5'].to_list() if self.metadata is not None else None
         self.train_length = train_length
         self.target_config = target_config
+        self.clipped_threshold = clipped_threshold
+        self.clip_val = 1e-4
         
         assert dataset_mode in ('beginning_from_each', 'intersecting_from_one', 'full'), 'bad dataset_mode'
         self.dataset_mode = dataset_mode
@@ -54,7 +56,7 @@ class EEGLabeledDataset(Dataset):
         if self.target_config['user_id']:
             res['user_id'] = row['user_id']
         if self.target_config['activity']:
-            res['activity'] = torch.zeros(768)
+            res['activity'] = torch.zeros(768) # Placeholder for now, dont forget that process_data cuts some points from ends
         return res
          
     def prepare_cache(self, ):
@@ -79,15 +81,17 @@ class EEGLabeledDataset(Dataset):
             for i in tqdm(range(len(self.available_filenames)), desc='Chunks from each file without intersection'):
                 raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[i]) # data is raw eeg numpy array 
                 proc_data = self.process_data(raw_data)
-                j = 0
+                start = 0
                 while True:
-                    start = (self.train_length) * j
                     chunk = proc_data[:, start : start + self.train_length]
                     if chunk.shape[1] != self.train_length:
                         break
+                    if calc_percent_clipped(chunk, self.clip_val) > self.clipped_threshold:
+                        start += self.train_length // 10
+                        continue
                     targets = self.get_targets(self.available_filenames[i], start)
                     torch.save([chunk.detach().clone(), targets], self.cache_processed_path / f"{numel}.pt")
-                    j += 1
+                    start += self.train_length
                     numel += 1
     
     def get_cached_ids(self, ):
@@ -112,7 +116,7 @@ class EEGLabeledDataset(Dataset):
         data = torch.tensor(data, dtype=torch.float32)
         data = data[:, 500:-500]
         
-        data = torch.clip(data, -1e-4, 1e-4)
+        data = torch.clip(data, -self.clip_val, self.clip_val)
 
         return data
     

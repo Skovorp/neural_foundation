@@ -119,7 +119,6 @@ if __name__ == "__main__":
                 'encoder_mean': emb_mean(batch['encoder_features']),
                 'target_mean': emb_mean(batch['targets']),
                 'context_mean': emb_mean(batch['context_vectors']),
-                # 'batch_partnnnn_clipped': calc_part_clipped(batch['data']) -- how to calc after normalisation????
             })
             pbar.set_description(f"Train {epoch_num:>3} loss: {batch['loss'].item():.5f} avg loss: {mn(train_losses):.5f} avg acc: {100 * mn(train_accs):.2f}%")
             
