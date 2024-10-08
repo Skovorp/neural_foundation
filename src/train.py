@@ -42,8 +42,12 @@ if __name__ == "__main__":
     )
     
     device = torch.device(cfg['training']['device'])
+    if cfg['training']['device']:
+        print("Device:", torch.cuda.get_device_name())
     
-    num_cpu = len(os.sched_getaffinity(0))
+    run_key = str(datetime.now().isoformat())
+    
+    num_cpu = 4 # len(os.sched_getaffinity(0))
     train_set = EEGLabeledDataset(**cfg['data_train'])
     train_loader = DataLoader(train_set, cfg['data_train']['batch_size'], num_workers=num_cpu, 
                         persistent_workers=cfg['data_train']['persistent_workers'],
@@ -138,9 +142,9 @@ if __name__ == "__main__":
                 seen_els += batch['data'].size(0)
                 pbar.set_description(f"Val   {epoch_num:>3} loss: {batch['loss'].item():.5f} avg loss: {sum(val_losses) / seen_els:.5f} avg acc: {100 * sum(val_accs) / seen_els:.2f}%")
         
-        if epoch_num % cfg['save']['every'] == 0:
-            torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{datetime.now().isoformat()}.pt")
-            torch.save(context_network.state_dict(), f"{cfg['save']['dir']}/context_network_{datetime.now().isoformat()}.pt")
+        if cfg['save']['every'] != -1 and epoch_num % cfg['save']['every'] == 0:
+            torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{run_key}.pt")
+            torch.save(context_network.state_dict(), f"{cfg['save']['dir']}/context_network_{run_key}.pt")
             
         wandb.log({
             'epoch_loss': mn(train_losses),
@@ -149,4 +153,6 @@ if __name__ == "__main__":
             'epoch_acc_val': sum(val_accs) / seen_els,
         }, commit=False)
 
+torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{run_key}.pt")
+torch.save(context_network.state_dict(), f"{cfg['save']['dir']}/context_network_{run_key}.pt")       
 wandb.finish()

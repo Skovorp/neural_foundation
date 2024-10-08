@@ -4,9 +4,9 @@ data_train:
   train_length: 73728 
   dataset_mode: "full"
   batch_size: 32
-  rebuild_cache: true
+  rebuild_cache: false
   limit: null
-  persistent_workers: true
+  persistent_workers: false
   target_config: 
     user_id: False
     activity: False
@@ -17,9 +17,9 @@ data_val:
   train_length: 73728 
   dataset_mode: "full"
   batch_size: 32
-  rebuild_cache: true
+  rebuild_cache: false
   limit: null
-  persistent_workers: true
+  persistent_workers: false
   target_config: 
     user_id: True
     activity: False
@@ -43,7 +43,7 @@ context_network:
     max_len: 1000
 optimizer:
   lr: 3.0e-4
-  weight_decay: 1.0e-2
+  weight_decay: 0
 scheduler:
   part_warmup_steps: 0.05
 training:
@@ -52,4 +52,4 @@ training:
   heavy_logs_every: 30
 save: 
   dir: /home/ps5359/checkpoints
-  every: 200
+  every: 5
