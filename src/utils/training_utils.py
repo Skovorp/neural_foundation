@@ -5,7 +5,8 @@ import math
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.pyplot as plt
 from utils.data_utils import fig2img
-
+import time
+import pandas as pd
 
 def benchmark_previous(encoder_res):
     """Loss is calculated as MSE(encoder_res[:, 1:, :], smt). 
@@ -36,7 +37,7 @@ def benchmark_cumsum(encoder_res):
         return ((target - pred) ** 2).mean().item()
 
 
-def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length, min_masked):
+def make_pretrain_mask_legacy(batch_size, num_chunks, mask_prob, mask_length, min_masked):
     if min_masked * 2 != num_chunks:
         print(f"WARNING!!! masking not 50%. min_masked: {min_masked}, num_chunks: {num_chunks}")
     assert mask_length > 0
@@ -69,6 +70,21 @@ def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length, min_maske
     assert (mask.sum(1) == min_masked).all()
     return mask
 
+def suggest_mask(batch_size, num_chunks, mask_prob, mask_length, device):
+    mask = torch.where(torch.rand(batch_size, num_chunks, device=device) < mask_prob, 1.0, 0.0) 
+    mask[:, mask_length:] = mask[:, mask_length:] - mask[:, : -mask_length]
+    mask = mask.cumsum(1) > 0
+    return mask
+
+
+@torch.no_grad()
+def make_pretrain_mask(batch_size, num_chunks, mask_prob, mask_length, min_masked, device, **kwargs):
+    while True:
+        masks = suggest_mask(batch_size * 256, num_chunks, mask_prob, mask_length, device) # works fast for bs=32, num_chunks=768, makes infrequent retries. on collab works faster than x256
+        ok_masks = masks.int().sum(axis=1) == min_masked
+        res = masks[ok_masks, :][:batch_size, :]
+        if res.shape[0] == batch_size:
+            return res
 
 
 def emb_std(embs):
@@ -124,12 +140,13 @@ def info_about_training(dataset, loader, encoder, context_network, cfg, device):
     sample_batch = encoder(sample_batch)
     
     print("Encoder output shape:", sample_batch['encoder_features'].shape)
+    time_masking(cfg, device)
     
     
 def plot_sim_image(targets, contexts, masks):
     assert targets.shape == contexts.shape and len(masks.shape) == 1 and len(targets.shape) == 2
 
-    with torch.no_grad():
+    with torch.no_grad(), torch.cuda.amp.autocast():
         targets = targets / torch.norm(targets, dim=1, keepdim=True)
         contexts = contexts / torch.norm(contexts, dim=1, keepdim=True)
         sims = (contexts @ targets.T).detach().cpu()
@@ -181,5 +198,64 @@ def plot_pca(targets, contexts, masks):
     plt.close()
     return res
 
+
+@torch.no_grad()
+def distance_edge(bool_tensor):
+    out1 = torch.zeros_like(bool_tensor, dtype=torch.int32)
+    out2 = torch.zeros_like(bool_tensor, dtype=torch.int32)
+    
+    count = 0
+    for i in range(len(bool_tensor)):
+        if bool_tensor[i]:  
+            count += 1
+            out1[i] += count  
+        else:
+            count = 0  
+    
+    count = 0
+    for i in range(len(bool_tensor) - 1, -1, -1):
+        if bool_tensor[i]: 
+            count += 1
+            out2[i] += count 
+        else:
+            count = 0 
+    
+    return torch.minimum(out1, out2)
+
+@torch.no_grad()
+def loss_edge_dist_distribution(mask, per_masktoken_loss):
+    dist = torch.stack([distance_edge(mask[i]) for i in range(mask.shape[0])], 0)
+    dist = dist[mask]
+    loss = per_masktoken_loss.flatten()
+    df = pd.DataFrame({'dist': dist.detach().cpu(), 'loss': loss.detach().cpu()})
+    df = df.groupby('dist', as_index=False).agg(
+        mean_loss=('loss', 'mean'),  # Calculate the mean of 'loss'
+        count=('loss', 'size')       # Count the number of occurrences
+    )
+    df = df.sort_values(by='dist')  # Sort the result by 'dist'
+    print(df)
+    return df
+    
+
 def mn(x):
     return sum(x) / len(x)
+
+
+def time_masking(cfg, device):
+    t = []
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize(device)
+    for _ in range(1000):
+        s = time.time()
+        make_pretrain_mask(
+            batch_size=cfg['data_train']['batch_size'], 
+            num_chunks=768,
+            mask_prob=cfg['context_network']['mask_prob'],
+            mask_length=cfg['context_network']['mask_length'],
+            min_masked=cfg['context_network']['min_masked'],
+            device=device)
+        torch.cuda.synchronize(device)
+        t.append(time.time() - s)
+    final_time = (sum(t) / len(t)) * 1000
+    assert final_time < 3, f"Masking works for longer than 3ms: {final_time:.3f}ms"
+    print(f"Masking works for {final_time:.3f}ms (assuming 768 chunks)")

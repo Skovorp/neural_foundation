@@ -27,18 +27,16 @@ class SinusoidalPositionalEncoding(nn.Module):
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, emb_dim, 2).float() * (-math.log(10000.0) / emb_dim))
         
-        # Initialize positional encoding using sin for even indices and cos for odd indices
         pe = torch.zeros(max_len, emb_dim)
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         
-        # Register the buffer to ensure it's not trainable
         self.pe = nn.Parameter(pe, requires_grad=False)
         self.norm = nn.LayerNorm(emb_dim, elementwise_affine=False)
 
     def forward(self, x):
-        # Add positional encoding to input tensor x (batch_size, seq_len, emb_dim)
-        x = x + self.pe[:x.size(1)].unsqueeze(0).to(x.device)
+        # x (batch_size, seq_len, emb_dim)
+        x = x + self.pe[:x.size(1)].unsqueeze(0)
         x = self.norm(x)
         return x
     
@@ -164,17 +162,18 @@ class ContextNetwork(BaseModel):
             assert False, "bad pe['type']"
 
     def forward(self, batch):
-        x = batch['encoder_features'].clone()
-        batch_size, num_chunks, emb_dim = x.shape
-        mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length, self.min_masked)
-        x[mask] = self.mask_emb
-        assert ((x[0, :, 0].detach().cpu() == self.mask_emb[0].detach().cpu()) == mask[0, :].detach().cpu()).all(), "masking failed :(" 
-        assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!"
-        x = self.positional_emb(x)
-        x = self.transformer_encoder(x)
-        batch['mask'] = mask
-        batch['context_vectors'] = x
-        batch['targets'] = self.target_proj(batch['encoder_features'])
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            x = batch['encoder_features'].clone()
+            batch_size, num_chunks, emb_dim = x.shape
+            mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length, self.min_masked, x.device)
+            x[mask] = self.mask_emb
+            # assert ((x[0, :, 0].detach().cpu() == self.mask_emb[0].detach().cpu()) == mask[0, :].detach().cpu()).all(), "masking failed :("  # THIS IS COMPUTE INTENSIVE!
+            # assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!" # THIS IS COMPUTE INTENSIVE!
+            x = self.positional_emb(x)
+            x = self.transformer_encoder(x)
+            batch['mask'] = mask
+            batch['context_vectors'] = x
+            batch['targets'] = self.target_proj(batch['encoder_features'])
         return batch
     
     def avg_part_masked(self, batch):

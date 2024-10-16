@@ -7,6 +7,19 @@ from scipy.signal import butter, sosfilt
 from tqdm import tqdm
 
 from utils.data_utils import load_recording, turn_into_patches, calc_percent_clipped
+from safetensors import safe_open
+from safetensors.torch import save_file
+
+def save_tsr(x, pth):
+    save_file(x, pth)
+
+def load_tsr(pth):
+    tensors = {}
+    with safe_open(pth, framework="pt", device='cpu') as f:
+        for k in f.keys():
+            tensors[k] = f.get_tensor(k)
+    return tensors
+        
 
 
 class EEGLabeledDataset(Dataset):
@@ -47,17 +60,17 @@ class EEGLabeledDataset(Dataset):
         user_ids = {serial: idx for idx, serial in enumerate(self.metadata['filename_h5'].dropna().unique())}
         self.num_user_ids = len(user_ids)
         self.metadata['user_id'] = self.metadata['filename_h5'].map(user_ids).fillna(self.none_user_id)
+        
             
             
-    def get_targets(self, fn, start_ind):
+    def get_targets(self, fn, start_ind, save_dict):
         assert self.metadata is not None
         row = self.metadata[self.metadata['filename_h5'] == fn].iloc[0]
-        res = {}
         if self.target_config['user_id']:
-            res['user_id'] = row['user_id']
+            save_dict['user_id'] = torch.tensor(row['user_id'])
         if self.target_config['activity']:
-            res['activity'] = torch.zeros(768) # Placeholder for now, dont forget that process_data cuts some points from ends
-        return res
+            save_dict['activity'] = torch.zeros(768) # Placeholder for now, dont forget that process_data cuts some points from ends
+        return save_dict
          
     def prepare_cache(self, ):
         assert self.available_filenames is not None, "self.available_filenames is None"
@@ -67,7 +80,7 @@ class EEGLabeledDataset(Dataset):
                 raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[i]) # data is raw eeg numpy array 
                 proc_data = self.process_data(raw_data)
                 proc_data = proc_data[:, :self.train_length]
-                torch.save(proc_data, self.cache_processed_path / f"{i}.pt")
+                save_tsr(proc_data, self.cache_processed_path / f"{i}.pt")
         elif self.dataset_mode == "intersecting_from_one":
             assert not self.compute_targets
             raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[0])
@@ -75,7 +88,7 @@ class EEGLabeledDataset(Dataset):
             for i in tqdm(range(40), desc="40 chunks from 100min of first file"):
                 start = (self.train_length // 2) * i
                 chunk = proc_data[:, start : start + self.train_length]
-                torch.save(chunk, self.cache_processed_path / f"{i}.pt")
+                save_tsr(chunk, self.cache_processed_path / f"{i}.pt")
         elif self.dataset_mode == "full":
             numel = 0
             for i in tqdm(range(len(self.available_filenames)), desc='Chunks from each file without intersection'):
@@ -89,8 +102,9 @@ class EEGLabeledDataset(Dataset):
                     if calc_percent_clipped(chunk, self.clip_val) > self.clipped_threshold:
                         start += self.train_length // 10
                         continue
-                    targets = self.get_targets(self.available_filenames[i], start)
-                    torch.save([chunk.detach().clone(), targets], self.cache_processed_path / f"{numel}.pt")
+                    to_save = {'data': chunk.detach().clone()}
+                    to_save = self.get_targets(self.available_filenames[i], start, to_save)
+                    save_tsr(to_save, self.cache_processed_path / f"{numel}.pt")
                     start += self.train_length
                     numel += 1
     
@@ -131,8 +145,8 @@ class EEGLabeledDataset(Dataset):
     
     def __getitem__(self, index):
         if index in self.cached_ids:
-            data, targets = torch.load(self.cache_processed_path / f"{index}.pt")
-            data = self.normalize_data(data)
-            return {'data': data, 'targets': targets}
+            r = load_tsr(self.cache_processed_path / f"{index}.pt")
+            r['data']= self.normalize_data(r['data'])
+            return r
         else:
             raise Exception("bad ind")
