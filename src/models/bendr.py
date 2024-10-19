@@ -162,24 +162,25 @@ class ContextNetwork(BaseModel):
             assert False, "bad pe['type']"
 
     def forward(self, batch, run_full=False):
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            batch_size, num_chunks, emb_dim = batch['encoder_features'].shape
-            if run_full:
-                x = self.positional_emb(batch['encoder_features'])
-                assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!" # THIS IS COMPUTE INTENSIVE!
-                x = self.transformer_encoder(x)
-                batch['full_context_vectors'] = x
-                return batch
-            x = batch['encoder_features'].clone()
-            mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length, self.min_masked, x.device)
-            x[mask] = self.mask_emb
-            batch['mask'] = mask
-            # assert ((x[0, :, 0].detach().cpu() == self.mask_emb[0].detach().cpu()) == mask[0, :].detach().cpu()).all(), "masking failed :("  # THIS IS COMPUTE INTENSIVE!
-            # assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!" # THIS IS COMPUTE INTENSIVE!
-            x = self.positional_emb(x)
+        # with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        # with pass:
+        batch_size, num_chunks, emb_dim = batch['encoder_features'].shape
+        if run_full:
+            x = self.positional_emb(batch['encoder_features'])
+            assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!" # THIS IS COMPUTE INTENSIVE!
             x = self.transformer_encoder(x)
-            batch['context_vectors'] = x
-            batch['targets'] = self.target_proj(batch['encoder_features'])
+            batch['full_context_vectors'] = x
+            return batch
+        x = batch['encoder_features'].clone()
+        mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length, self.min_masked, x.device)
+        x[mask] = self.mask_emb
+        batch['mask'] = mask
+        # assert ((x[0, :, 0].detach().cpu() == self.mask_emb[0].detach().cpu()) == mask[0, :].detach().cpu()).all(), "masking failed :("  # THIS IS COMPUTE INTENSIVE!
+        # assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!" # THIS IS COMPUTE INTENSIVE!
+        x = self.positional_emb(x)
+        x = self.transformer_encoder(x)
+        batch['context_vectors'] = x
+        batch['targets'] = self.target_proj(batch['encoder_features'])
         return batch
     
     def avg_part_masked(self, batch):

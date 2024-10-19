@@ -73,16 +73,16 @@ def calc_self_entropy(x):
     return (torch.log(q + 1e-5) * q).mean()
 
 
-def calc_loss_fast(batch, temp):
+def calc_loss_effective(batch, temp):
     features, context, mask = batch['targets'], batch['context_vectors'], batch['mask']
     batch_size, _, emb_size = features.shape
     
-    masked_context = context[mask].view(batch_size, -1, emb_size)
-    masked_features = features[mask].view(batch_size, -1, emb_size)
+    masked_context = context[mask].view(batch_size, -1, emb_size).to(torch.float32)
+    masked_features = features[mask].view(batch_size, -1, emb_size).to(torch.float32)
     
     num_masked = masked_features.size(1)
     
-    sims = masked_context @ masked_features
+    sims = masked_context @ masked_features.transpose(-1, -2)
     sims = sims / torch.norm(masked_context, dim=2).unsqueeze(2)
     sims = sims / torch.norm(masked_features, dim=2).unsqueeze(1) # batch_size, num_masked, num_masked
     assert sims.min() > -1 and sims.max() < 1
@@ -94,6 +94,14 @@ def calc_loss_fast(batch, temp):
     
     batch['per_masktoken_loss'] = unreduced_loss
     batch['loss'] = unreduced_loss.mean()
+    
+    with torch.no_grad():
+        # probably use torch.diagonal?
+        batch['mean_correct_sim'] = torch.tensor(-1.0) # sims[:, :, 0].mean()
+        batch['mean_destractor_sim'] = torch.tensor(-1.0) # sims[:, :, 1:].mean()
+        # assert sims.argmax(1).shape == (batch_size, num_masked)
+        batch['acc_feature_choice'] = torch.tensor(-1.0) #((sims.argmax(1) == 0) * 1.0).mean()
+    
     return batch
     
     

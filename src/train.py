@@ -1,6 +1,6 @@
 from dataset.labeled_dataset import EEGLabeledDataset
 from models.bendr import EncoderConv, ContextNetwork
-from loss.loss_bendr import calc_loss_proper
+from loss.loss_bendr import calc_loss_proper, calc_loss_effective
 from utils.training_utils import emb_std, emb_mean, warn_one_batch, info_about_training, plot_pca, plot_sim_image, mn, loss_edge_dist_distribution
 from eval.reg import evaluate_logistic_regression
 
@@ -38,7 +38,7 @@ load_dotenv()
 
 
 if __name__ == "__main__":
-    with open('configs/cluster_config_bendr.yaml', 'r') as file:
+    with open('configs/od_config_bendr.yaml', 'r') as file:
         cfg = yaml.safe_load(file)
     wandb.init(
         project='neural_foundation',
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     
     run_key = str(datetime.now().isoformat())
     
-    num_cpu = 8 # len(os.sched_getaffinity(0))
+    num_cpu = 16 # len(os.sched_getaffinity(0))
     train_set = EEGLabeledDataset(**cfg['data_train'])
     train_loader = DataLoader(train_set, cfg['data_train']['batch_size'], num_workers=num_cpu, 
                         persistent_workers=True, pin_memory=True,
@@ -89,7 +89,8 @@ if __name__ == "__main__":
             
             batch = encoder(batch)
             batch = context_network(batch)
-            batch = calc_loss_proper(batch, cfg['context_network']['temp'],  cfg['context_network']['num_negatives'])
+            batch = calc_loss_effective(batch, cfg['context_network']['temp'])
+            # batch = calc_loss_proper(batch, cfg['context_network']['temp'],  cfg['context_network']['num_negatives'])
             
             batch['loss'].backward()
             optimizer.step()
@@ -102,10 +103,10 @@ if __name__ == "__main__":
             
             if cfg['training']['heavy_logs_every'] != -1 and ((epoch_num - 1) * len(train_loader) + batch_idx) % cfg['training']['heavy_logs_every'] == 0:
                 wandb.log({
-                    'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().numpy(), num_bins=512),
-                    'target_hist': wandb.Histogram(batch['targets'].detach().cpu().numpy(), num_bins=512),
-                    'context_hist': wandb.Histogram(batch['context_vectors'].detach().cpu().numpy(), num_bins=512),
-                    'loss_hist': wandb.Histogram(batch['per_masktoken_loss'].detach().cpu().numpy(), num_bins=64),
+                    'encoder_hist': wandb.Histogram(batch['encoder_features'].detach().cpu().to(torch.float32).numpy(), num_bins=512),
+                    'target_hist': wandb.Histogram(batch['targets'].detach().cpu().to(torch.float32).numpy(), num_bins=512),
+                    'context_hist': wandb.Histogram(batch['context_vectors'].detach().cpu().to(torch.float32).numpy(), num_bins=512),
+                    'loss_hist': wandb.Histogram(batch['per_masktoken_loss'].detach().cpu().to(torch.float32).numpy(), num_bins=64),
                     
                     'sample_sim': wandb.Image(plot_sim_image(batch['targets'][0], batch['context_vectors'][0], batch['mask'][0])),
                     'sample_pca': wandb.Image(plot_pca(batch['targets'][0], batch['context_vectors'][0], batch['mask'][0])),
@@ -153,7 +154,7 @@ if __name__ == "__main__":
                 pbar.set_description(f"Val   {epoch_num:>3} loss: {batch['loss'].item():.5f} avg loss: {sum(val_losses) / seen_els:.5f} avg acc: {100 * sum(val_accs) / seen_els:.2f}%")
         
         user_id_acc = evaluate_logistic_regression(torch.cat(seq_vecs, 0), torch.cat(user_ids, 0), mode='cv', do_norm=True)
-        
+        print(user_id_acc)
         if cfg['save']['every'] != -1 and epoch_num % cfg['save']['every'] == 0:
             torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{run_key}.pt")
             torch.save(context_network.state_dict(), f"{cfg['save']['dir']}/context_network_{run_key}.pt")

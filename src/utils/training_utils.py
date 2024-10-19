@@ -233,7 +233,6 @@ def loss_edge_dist_distribution(mask, per_masktoken_loss):
         count=('loss', 'size')       # Count the number of occurrences
     )
     df = df.sort_values(by='dist')  # Sort the result by 'dist'
-    print(df)
     return df
     
 
