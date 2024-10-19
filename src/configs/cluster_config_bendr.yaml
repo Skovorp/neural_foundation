@@ -3,9 +3,9 @@ data_train:
   cache_processed_path: /vast/ps5359/1k/cache/
   train_length: 73728 
   dataset_mode: "full"
-  batch_size: 128
+  batch_size: 32
   rebuild_cache: false
-  limit: null
+  limit: 320
   target_config: 
     user_id: False
     activity: False

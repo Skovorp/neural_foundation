@@ -142,11 +142,11 @@ def info_about_training(dataset, loader, encoder, context_network, cfg, device):
     print("Encoder output shape:", sample_batch['encoder_features'].shape)
     time_masking(cfg, device)
     
-    
+@torch.no_grad()
 def plot_sim_image(targets, contexts, masks):
     assert targets.shape == contexts.shape and len(masks.shape) == 1 and len(targets.shape) == 2
 
-    with torch.no_grad(), torch.cuda.amp.autocast():
+    with torch.cuda.amp.autocast():
         targets = targets / torch.norm(targets, dim=1, keepdim=True)
         contexts = contexts / torch.norm(contexts, dim=1, keepdim=True)
         sims = (contexts @ targets.T).detach().cpu()
@@ -176,15 +176,15 @@ def plot_sim_image(targets, contexts, masks):
     plt.close()
     return res
 
-
+@torch.no_grad()
 def plot_pca(targets, contexts, masks):
     assert targets.shape == contexts.shape and len(masks.shape) == 1 and len(targets.shape) == 2
     
-    with torch.no_grad():
-        cat_vecs = torch.cat([contexts.detach().cpu(), targets.detach().cpu()], 0)
-        cat_vecs = cat_vecs / torch.norm(cat_vecs, dim=1, keepdim=True)
-        u, _, _ = torch.pca_lowrank(cat_vecs, q=2)
-        msk = masks.cpu().detach()
+
+    cat_vecs = torch.cat([contexts.detach().cpu(), targets.detach().cpu()], 0)
+    cat_vecs = cat_vecs / torch.norm(cat_vecs, dim=1, keepdim=True)
+    u, _, _ = torch.pca_lowrank(cat_vecs, q=2)
+    msk = masks.cpu().detach()
 
     cont_2d = u[:msk.shape[0], :]
     tgt_2d = u[msk.shape[0]:, :]
@@ -240,7 +240,7 @@ def loss_edge_dist_distribution(mask, per_masktoken_loss):
 def mn(x):
     return sum(x) / len(x)
 
-
+@torch.no_grad()
 def time_masking(cfg, device):
     t = []
     torch.cuda.empty_cache()
