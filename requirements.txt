@@ -13,3 +13,4 @@ fastparquet
 python-dotenv
 matplotlib
 seaborn
+scikit-learn

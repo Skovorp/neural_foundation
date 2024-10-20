@@ -96,11 +96,12 @@ def calc_loss_effective(batch, temp):
     batch['loss'] = unreduced_loss.mean()
     
     with torch.no_grad():
-        # probably use torch.diagonal?
-        batch['mean_correct_sim'] = torch.tensor(-1.0) # sims[:, :, 0].mean()
-        batch['mean_destractor_sim'] = torch.tensor(-1.0) # sims[:, :, 1:].mean()
-        # assert sims.argmax(1).shape == (batch_size, num_masked)
-        batch['acc_feature_choice'] = torch.tensor(-1.0) #((sims.argmax(1) == 0) * 1.0).mean()
+        sum_diag = torch.diagonal(sims, dim1=1, dim2=2).sum()
+        batch['mean_correct_sim'] = sum_diag / (batch_size * num_masked)
+        batch['mean_destractor_sim'] = (sims.sum() - sum_diag) / (batch_size * num_masked * (num_masked - 1))
+        assert sims.argmax(1).shape == (batch_size, num_masked)
+        corrects = torch.arange(num_masked).unsqueeze(0).expand(batch_size, num_masked)
+        batch['acc_feature_choice'] = ((sims.argmax(1) == corrects) * 1.0).mean()
     
     return batch
     

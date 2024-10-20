@@ -45,6 +45,7 @@ if __name__ == "__main__":
         config=cfg,
         mode='disabled'
     )
+    os.makedirs(cfg['save']['dir'], exist_ok=True)
     
     device = torch.device(cfg['training']['device'])
     if cfg['training']['device']:
