@@ -167,7 +167,7 @@ class ContextNetwork(BaseModel):
         batch_size, num_chunks, emb_dim = batch['encoder_features'].shape
         if run_full:
             x = self.positional_emb(batch['encoder_features'])
-            assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!" # THIS IS COMPUTE INTENSIVE!
+            # assert not (batch['encoder_features'] == x).all(), "Inplace operations on encoder_features are HARAM!" # THIS IS COMPUTE INTENSIVE!
             x = self.transformer_encoder(x)
             batch['full_context_vectors'] = x
             return batch
@@ -182,11 +182,3 @@ class ContextNetwork(BaseModel):
         batch['context_vectors'] = x
         batch['targets'] = self.target_proj(batch['encoder_features'])
         return batch
-    
-    def avg_part_masked(self, batch):
-        batch_size, num_chunks, _, _ = batch.shape
-        res = 0
-        for _ in range(100):
-            mask = make_pretrain_mask(batch_size, num_chunks, self.mask_prob, self.mask_length, self.min_masked)
-            res += (mask * 1.0).mean().item() # true is mask
-        return res / 100

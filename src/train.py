@@ -43,7 +43,7 @@ if __name__ == "__main__":
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        mode='disabled'
+        # mode='disabled'
     )
     os.makedirs(cfg['save']['dir'], exist_ok=True)
     
@@ -155,7 +155,6 @@ if __name__ == "__main__":
                 pbar.set_description(f"Val   {epoch_num:>3} loss: {batch['loss'].item():.5f} avg loss: {sum(val_losses) / seen_els:.5f} avg acc: {100 * sum(val_accs) / seen_els:.2f}%")
         
         user_id_acc = evaluate_logistic_regression(torch.cat(seq_vecs, 0), torch.cat(user_ids, 0), mode='cv', do_norm=True)
-        print(user_id_acc)
         if cfg['save']['every'] != -1 and epoch_num % cfg['save']['every'] == 0:
             torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{run_key}.pt")
             torch.save(context_network.state_dict(), f"{cfg['save']['dir']}/context_network_{run_key}.pt")

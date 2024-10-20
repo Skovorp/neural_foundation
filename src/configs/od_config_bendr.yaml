@@ -47,7 +47,7 @@ scheduler:
 training:
   device: "cuda"
   num_epochs: 200
-  heavy_logs_every: -1
+  heavy_logs_every: 50
 save: 
   dir: /root/checkpoints
-  every: -1
+  every: 10

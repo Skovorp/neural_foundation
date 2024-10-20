@@ -97,8 +97,8 @@ def calc_loss_effective(batch, temp):
     
     with torch.no_grad():
         sum_diag = torch.diagonal(sims, dim1=1, dim2=2).sum()
-        batch['mean_correct_sim'] = sum_diag / (batch_size * num_masked)
-        batch['mean_destractor_sim'] = (sims.sum() - sum_diag) / (batch_size * num_masked * (num_masked - 1))
+        batch['mean_correct_sim'] = temp * sum_diag / (batch_size * num_masked)
+        batch['mean_destractor_sim'] = temp * (sims.sum() - sum_diag) / (batch_size * num_masked * (num_masked - 1))
         assert sims.argmax(1).shape == (batch_size, num_masked)
         corrects = torch.arange(num_masked, device=sims.device).unsqueeze(0).expand(batch_size, num_masked)
         batch['acc_feature_choice'] = ((sims.argmax(1) == corrects) * 1.0).mean()
