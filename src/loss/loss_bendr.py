@@ -100,7 +100,7 @@ def calc_loss_effective(batch, temp):
         batch['mean_correct_sim'] = sum_diag / (batch_size * num_masked)
         batch['mean_destractor_sim'] = (sims.sum() - sum_diag) / (batch_size * num_masked * (num_masked - 1))
         assert sims.argmax(1).shape == (batch_size, num_masked)
-        corrects = torch.arange(num_masked).unsqueeze(0).expand(batch_size, num_masked)
+        corrects = torch.arange(num_masked, device=sims.device).unsqueeze(0).expand(batch_size, num_masked)
         batch['acc_feature_choice'] = ((sims.argmax(1) == corrects) * 1.0).mean()
     
     return batch
