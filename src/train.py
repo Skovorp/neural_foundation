@@ -38,12 +38,13 @@ load_dotenv()
 
 
 if __name__ == "__main__":
+    # configs and stuff
     with open('configs/od_config_bendr.yaml', 'r') as file:
         cfg = yaml.safe_load(file)
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        # mode='disabled'
+        mode='disabled'
     )
     os.makedirs(cfg['save']['dir'], exist_ok=True)
     
@@ -53,6 +54,7 @@ if __name__ == "__main__":
     
     run_key = str(datetime.now().isoformat())
     
+    # data
     num_cpu = 16 # len(os.sched_getaffinity(0))
     train_set = EEGLabeledDataset(**cfg['data_train'])
     train_loader = DataLoader(train_set, cfg['data_train']['batch_size'], num_workers=num_cpu, 
@@ -63,21 +65,27 @@ if __name__ == "__main__":
                     persistent_workers=True, pin_memory=True,
                     shuffle=False, drop_last=False)
     
+    # models
     encoder = EncoderConv(**cfg['encoder']).to(device)
     context_network = ContextNetwork(**cfg['context_network']).to(device)
     info_about_training(train_set, train_loader, encoder, context_network, cfg, device)
     warn_one_batch(cfg['data_val']['dataset_mode'] != "full")
     
+    # optimizer
     optimizer = torch.optim.Adam(
         list(encoder.parameters()) + list(context_network.parameters()),
         **cfg['optimizer']
     )
     
+    # lr scheduler
     total_steps = len(train_loader) * cfg['training']['num_epochs']
     warmup_steps = int(cfg['scheduler']['part_warmup_steps'] * total_steps)
     warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1, total_iters=warmup_steps)
     other_scheduler = LinearLR(optimizer, start_factor=1, end_factor=1e-6, total_iters=total_steps - warmup_steps)
     scheduler = SequentialLR(optimizer, [warmup_scheduler, other_scheduler], milestones=[warmup_steps])
+    
+    # loss_scaler
+    scaler = torch.cuda.amp.GradScaler(enabled=cfg["training"]["mixed_precision"])
     
     for epoch_num in range(1, cfg['training']['num_epochs'] + 1):
         pbar = tqdm(train_loader)
@@ -85,16 +93,21 @@ if __name__ == "__main__":
         encoder.train()
         context_network.train()
         for batch_idx, batch in enumerate(pbar):
-            optimizer.zero_grad(set_to_none=True)
-            batch['data'] = batch['data'].to(device, dtype=torch.float32, non_blocking=True)
-            
-            batch = encoder(batch)
-            batch = context_network(batch)
-            batch = calc_loss_effective(batch, cfg['context_network']['temp'])
+            with torch.autocast(
+                device_type=cfg["training"]['device'], enabled=cfg["training"]["mixed_precision"],
+                dtype=eval(cfg["training"]["mp_dtype"])
+            ):
+                optimizer.zero_grad(set_to_none=True)
+                batch['data'] = batch['data'].to(device, dtype=torch.float32, non_blocking=True)
+                
+                batch = encoder(batch)
+                batch = context_network(batch)
+                batch = calc_loss_effective(batch, cfg['context_network']['temp'])
             # batch = calc_loss_proper(batch, cfg['context_network']['temp'],  cfg['context_network']['num_negatives'])
             
-            batch['loss'].backward()
-            optimizer.step()
+            scaler.scale(batch['loss']).backward()
+            scaler.step(optimizer)
+            scaler.update()
             scheduler.step()
             
             train_losses.append(batch['loss'].item())

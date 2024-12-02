@@ -146,7 +146,7 @@ def info_about_training(dataset, loader, encoder, context_network, cfg, device):
 def plot_sim_image(targets, contexts, masks):
     assert targets.shape == contexts.shape and len(masks.shape) == 1 and len(targets.shape) == 2
 
-    with torch.cuda.amp.autocast():
+    with torch.amp.autocast('cuda'):
         targets = targets / torch.norm(targets, dim=1, keepdim=True)
         contexts = contexts / torch.norm(contexts, dim=1, keepdim=True)
         sims = (contexts @ targets.T).detach().cpu()

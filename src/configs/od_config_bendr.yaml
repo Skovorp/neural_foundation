@@ -1,21 +1,21 @@
 data_train:
-  data_path: /root/neural_data/1k/h5
-  cache_processed_path: /root/neural_data/1k/cache
+  data_path: /root/neural_data/train_clean/h5
+  cache_processed_path: /root/neural_data/train_clean/cache
   train_length: 73728 
   dataset_mode: "full"
-  batch_size: 128
+  batch_size: 16 
   rebuild_cache: false
   limit: null
   target_config: 
-    user_id: False
+    user_id: True
     activity: False
   clipped_threshold: 0.3 
 data_val:
-  data_path: /root/neural_data/full_clean/h5
-  cache_processed_path: /root/neural_data/full_clean/cache/
+  data_path: /root/neural_data/val_clean/h5
+  cache_processed_path: /root/neural_data/val_clean/cache
   train_length: 73728 
   dataset_mode: "full"
-  batch_size: 128
+  batch_size: 16
   rebuild_cache: false
   limit: null
   target_config: 
@@ -30,7 +30,7 @@ context_network:
   emb_dim: 512
   ffn_dim: 2048
   nhead: 8
-  transformer_num_layers: 6
+  transformer_num_layers: 20
   mask_prob: 0.065
   mask_length: 10
   min_masked: 384
@@ -46,6 +46,8 @@ scheduler:
   part_warmup_steps: 0.05
 training:
   device: "cuda"
+  mixed_precision: true
+  mp_dtype: "torch.float16"
   num_epochs: 200
   heavy_logs_every: 50
 save: 

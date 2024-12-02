@@ -85,7 +85,8 @@ def calc_loss_effective(batch, temp):
     sims = masked_context @ masked_features.transpose(-1, -2)
     sims = sims / torch.norm(masked_context, dim=2).unsqueeze(2)
     sims = sims / torch.norm(masked_features, dim=2).unsqueeze(1) # batch_size, num_masked, num_masked
-    assert sims.min() > -1 and sims.max() < 1
+    # TODO: getting sim inf. look above how to fix it
+    assert sims.min() > -1 and sims.max() < 1, f"sims.min(): {sims.min()} | sims.max(): {sims.max()}"
     sims = sims / temp
     sims = sims.permute(0, 2, 1) 
     
