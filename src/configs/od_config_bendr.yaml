@@ -40,13 +40,14 @@ context_network:
     type: 'sin'
     max_len: 1000
 optimizer:
-  lr: 1.2e-3
+  lr: 0.4e-3
   weight_decay: 0
 scheduler:
   part_warmup_steps: 0.05
 training:
   device: "cuda"
   mixed_precision: true
+  scaler: true
   mp_dtype: "torch.float16"
   num_epochs: 200
   heavy_logs_every: 50

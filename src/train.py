@@ -1,7 +1,7 @@
 from dataset.labeled_dataset import EEGLabeledDataset
 from models.bendr import EncoderConv, ContextNetwork
 from loss.loss_bendr import calc_loss_proper, calc_loss_effective
-from utils.training_utils import emb_std, emb_mean, warn_one_batch, info_about_training, plot_pca, plot_sim_image, mn, loss_edge_dist_distribution
+from utils.training_utils import emb_std, emb_mean, warn_one_batch, info_about_training, plot_pca, plot_sim_image, mn, loss_edge_dist_distribution, profile_grad
 from eval.reg import evaluate_logistic_regression
 
 from torch.utils.data import DataLoader
@@ -44,7 +44,7 @@ if __name__ == "__main__":
     wandb.init(
         project='neural_foundation',
         config=cfg,
-        mode='disabled'
+        # mode='disabled'
     )
     os.makedirs(cfg['save']['dir'], exist_ok=True)
     
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     scheduler = SequentialLR(optimizer, [warmup_scheduler, other_scheduler], milestones=[warmup_steps])
     
     # loss_scaler
-    scaler = torch.cuda.amp.GradScaler(enabled=cfg["training"]["mixed_precision"])
+    scaler = torch.amp.GradScaler(enabled=cfg["training"]["scaler"], init_scale=2. ** 18)
     
     for epoch_num in range(1, cfg['training']['num_epochs'] + 1):
         pbar = tqdm(train_loader)
@@ -106,6 +106,8 @@ if __name__ == "__main__":
             # batch = calc_loss_proper(batch, cfg['context_network']['temp'],  cfg['context_network']['num_negatives'])
             
             scaler.scale(batch['loss']).backward()
+            batch['encoder_profiler_grad'] = profile_grad(encoder)
+            batch['context_profiler_grad'] = profile_grad(context_network)
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
@@ -144,6 +146,9 @@ if __name__ == "__main__":
                 'encoder_mean': emb_mean(batch['encoder_features']),
                 'target_mean': emb_mean(batch['targets']),
                 'context_mean': emb_mean(batch['context_vectors']),
+                'loss_scale': scaler.get_scale(),
+                'encoder_grad_zeros': batch['encoder_profiler_grad']['zeros'],
+                'context_grad_zeros': batch['context_profiler_grad']['zeros'],
             })
             pbar.set_description(f"Train {epoch_num:>3} loss: {batch['loss'].item():.5f} avg loss: {mn(train_losses):.5f} avg acc: {100 * mn(train_accs):.2f}%")
             

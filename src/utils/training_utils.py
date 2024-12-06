@@ -258,3 +258,26 @@ def time_masking(cfg, device):
     final_time = (sum(t) / len(t)) * 1000
     assert final_time < 3, f"Masking works for longer than 3ms: {final_time:.3f}ms"
     print(f"Masking works for {final_time:.3f}ms (assuming 768 chunks)")
+    
+    
+@torch.no_grad()
+def profile_grad(model):
+    total_elements = 0
+    nan_elements = 0
+    inf_elements = 0
+    zero_elemets = 0
+
+    for param in model.parameters():
+        if param.grad is not None:
+            total_elements += param.grad.numel()  
+            nan_elements += torch.isnan(param.grad).sum() 
+            inf_elements += torch.isinf(param.grad).sum()
+            zero_elemets += (param.grad == 0.0).sum()
+
+    return {
+        'nans': nan_elements, 
+        'infs': inf_elements, 
+        'zeros': zero_elemets, 
+        'total': total_elements 
+    }
+    

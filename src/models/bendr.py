@@ -160,6 +160,10 @@ class ContextNetwork(BaseModel):
             self.positional_emb = SinusoidalPositionalEncoding(emb_dim, **pe)
         else:
             assert False, "bad pe['type']"
+            
+        for param in self.transformer_encoder.parameters():
+            if param.dim() > 1 and param.requires_grad:
+                torch.nn.init.xavier_uniform_(param)
 
     def forward(self, batch, run_full=False):
         # with torch.cuda.amp.autocast(dtype=torch.bfloat16):
