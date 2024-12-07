@@ -223,7 +223,7 @@ def distance_edge(bool_tensor):
     return torch.minimum(out1, out2)
 
 @torch.no_grad()
-def loss_edge_dist_distribution(mask, per_masktoken_loss):
+def loss_edge_dist_distribution(mask, per_masktoken_loss, step_num=None):
     dist = torch.stack([distance_edge(mask[i]) for i in range(mask.shape[0])], 0)
     dist = dist[mask]
     loss = per_masktoken_loss.flatten()
@@ -233,6 +233,11 @@ def loss_edge_dist_distribution(mask, per_masktoken_loss):
         count=('loss', 'size')       # Count the number of occurrences
     )
     df = df.sort_values(by='dist')  # Sort the result by 'dist'
+    if step_num is None:
+        step_num = 0
+    # this is so i can display a pretty table in wandb
+    # probably there is a way to set this up inside w&b but I couldnt figure it out
+    df['step_num'] = step_num
     return df
     
 

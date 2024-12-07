@@ -41,7 +41,7 @@ if __name__ == "__main__":
     # configs and stuff
     with open('configs/od_config_bendr.yaml', 'r') as file:
         cfg = yaml.safe_load(file)
-    wandb.init(
+    wb_run = wandb.init(
         project='neural_foundation',
         config=cfg,
         # mode='disabled'
@@ -126,7 +126,7 @@ if __name__ == "__main__":
                     
                     'sample_sim': wandb.Image(plot_sim_image(batch['targets'][0], batch['context_vectors'][0], batch['mask'][0])),
                     'sample_pca': wandb.Image(plot_pca(batch['targets'][0], batch['context_vectors'][0], batch['mask'][0])),
-                    'loss_edge_dist_distribution': wandb.Table(dataframe=loss_edge_dist_distribution(batch['mask'], batch['per_masktoken_loss']))
+                    'loss_edge_dist_distribution': wandb.Table(dataframe=loss_edge_dist_distribution(batch['mask'], batch['per_masktoken_loss'], wb_run.step))
                     # 'sample_proc_spec': wandb.Image(plot_spec(batch['sample_processed'])),
                     # 'sample_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'])),
                     # 'full_proc_plot': wandb.Image(plot_first_n(batch['sample_processed'], n=None)),
