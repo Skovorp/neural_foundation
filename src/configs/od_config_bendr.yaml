@@ -1,6 +1,6 @@
 data_train:
-  data_path: /root/neural_data/train_clean/h5
-  cache_processed_path: /root/neural_data/train_clean/cache
+  data_path: /root/neural_data/1k/h5
+  cache_processed_path: /root/neural_data/1k/cache
   train_length: 73728 
   dataset_mode: "full"
   batch_size: 16 
@@ -11,8 +11,8 @@ data_train:
     activity: False
   clipped_threshold: 0.3 
 data_val:
-  data_path: /root/neural_data/val_clean/h5
-  cache_processed_path: /root/neural_data/val_clean/cache
+  data_path: /root/neural_data/full_clean/h5
+  cache_processed_path: /root/neural_data/full_clean/cache
   train_length: 73728 
   dataset_mode: "full"
   batch_size: 16
