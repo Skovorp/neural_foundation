@@ -4,7 +4,9 @@ from sklearn.model_selection import cross_val_score
 import torch
 import time
 import numpy as np
-
+from catboost import CatBoostClassifier, Pool
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
 
 def evaluate_logistic_regression(X, y, mode, do_norm):
     if do_norm:
@@ -23,3 +25,23 @@ def evaluate_logistic_regression(X, y, mode, do_norm):
         return np.mean(accuracies)
     else:
         assert False
+
+
+def evaluate_catboost(X: torch.Tensor, y: torch.Tensor, do_norm):
+    if do_norm:
+        X = X / torch.norm(X, dim=1, keepdim=True)
+    X_np = X.numpy()
+    y_np = y.numpy()
+
+    X_train, X_val, y_train, y_val = train_test_split(X_np, y_np, test_size=0.2, random_state=42)
+
+    train_pool = Pool(data=X_train, label=y_train)
+    val_pool = Pool(data=X_val, label=y_val)
+
+    model = CatBoostClassifier(task_type='GPU')
+
+    model.fit(train_pool, eval_set=val_pool, early_stopping_rounds=50)
+
+    y_val_pred = model.predict(val_pool)
+    acc = accuracy_score(y_val, y_val_pred)
+    return acc

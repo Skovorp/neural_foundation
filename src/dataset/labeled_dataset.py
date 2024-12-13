@@ -6,7 +6,7 @@ import pandas as pd
 from scipy.signal import butter, sosfilt
 from tqdm import tqdm
 
-from utils.data_utils import load_recording, turn_into_patches, calc_percent_clipped
+from utils.data_utils import load_recording, calc_percent_clipped, check_std_channels
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -23,7 +23,7 @@ def load_tsr(pth):
 
 
 class EEGLabeledDataset(Dataset):
-    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, target_config, clipped_threshold, limit=None, rebuild_cache=True, **kwargs):
+    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, target_config, clipped_threshold, norm_std_range_min=0.01, norm_std_range_max=1.99, limit=None, rebuild_cache=True, **kwargs):
         super().__init__()
         self.none_user_id = -100
         self.num_user_ids = None
@@ -36,6 +36,8 @@ class EEGLabeledDataset(Dataset):
         self.train_length = train_length
         self.target_config = target_config
         self.clipped_threshold = clipped_threshold
+        self.norm_std_range_min = norm_std_range_min
+        self.norm_std_range_max = norm_std_range_max
         self.clip_val = 1e-4
         
         assert dataset_mode in ('beginning_from_each', 'intersecting_from_one', 'full'), 'bad dataset_mode'
@@ -93,13 +95,18 @@ class EEGLabeledDataset(Dataset):
             numel = 0
             for i in tqdm(range(len(self.available_filenames)), desc='Chunks from each file without intersection'):
                 raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[i]) # data is raw eeg numpy array 
+                if raw_data is None:
+                    continue
                 proc_data = self.process_data(raw_data)
                 start = 0
                 while True:
                     chunk = proc_data[:, start : start + self.train_length]
                     if chunk.shape[1] != self.train_length:
                         break
-                    if calc_percent_clipped(chunk, self.clip_val) > self.clipped_threshold:
+                    is_ok = calc_percent_clipped(chunk, self.clip_val) < self.clipped_threshold
+                    is_ok = is_ok and check_std_channels(self.normalize_data(chunk), self.norm_std_range_min, self.norm_std_range_max) 
+                    # this might be MEGA slow, multiprocessing???
+                    if not is_ok:
                         start += self.train_length // 10
                         continue
                     to_save = {'data': chunk.detach().clone()}

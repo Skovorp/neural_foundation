@@ -2,7 +2,7 @@ from dataset.labeled_dataset import EEGLabeledDataset
 from models.bendr import EncoderConv, ContextNetwork
 from loss.loss_bendr import calc_loss_proper, calc_loss_effective
 from utils.training_utils import emb_std, emb_mean, warn_one_batch, info_about_training, plot_pca, plot_sim_image, mn, loss_edge_dist_distribution, profile_grad
-from eval.reg import evaluate_logistic_regression
+from eval.reg import evaluate_logistic_regression, evaluate_catboost
 
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import SequentialLR, LinearLR
@@ -172,7 +172,9 @@ if __name__ == "__main__":
                 seq_vecs.append(batch['full_context_vectors'].mean(1).to(torch.device('cpu'), non_blocking=True))
                 pbar.set_description(f"Val   {epoch_num:>3} loss: {batch['loss'].item():.5f} avg loss: {sum(val_losses) / seen_els:.5f} avg acc: {100 * sum(val_accs) / seen_els:.2f}%")
         
-        user_id_acc = evaluate_logistic_regression(torch.cat(seq_vecs, 0), torch.cat(user_ids, 0), mode='cv', do_norm=True)
+        val_X, val_y = torch.cat(seq_vecs, 0), torch.cat(user_ids, 0)
+        user_id_acc = evaluate_logistic_regression(val_X, val_y, mode='cv', do_norm=True)
+        user_id_acc_catboost = evaluate_catboost(val_X, val_y, do_norm=True)
         if cfg['save']['every'] != -1 and epoch_num % cfg['save']['every'] == 0:
             torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{run_key}.pt")
             torch.save(context_network.state_dict(), f"{cfg['save']['dir']}/context_network_{run_key}.pt")
@@ -183,6 +185,7 @@ if __name__ == "__main__":
             'epoch_loss_val': sum(val_losses) / seen_els,
             'epoch_acc_val': sum(val_accs) / seen_els,
             'user_id_acc': user_id_acc,
+            'user_id_acc_catboost': user_id_acc_catboost,
         }, commit=False)
 
 torch.save(encoder.state_dict(), f"{cfg['save']['dir']}/encoder_{run_key}.pt")

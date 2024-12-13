@@ -180,3 +180,5 @@ pyrightconfig.json
 
 # tensorboard
 */log
+wandb/
+catboost_info/
