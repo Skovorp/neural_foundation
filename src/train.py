@@ -103,6 +103,7 @@ if __name__ == "__main__":
                 batch = encoder(batch)
                 batch = context_network(batch)
                 batch = calc_loss_effective(batch, cfg['context_network']['temp'])
+                scale_before = scaler.get_scale()
             # batch = calc_loss_proper(batch, cfg['context_network']['temp'],  cfg['context_network']['num_negatives'])
             
             scaler.scale(batch['loss']).backward()
@@ -111,6 +112,9 @@ if __name__ == "__main__":
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
+            
+            if scaler.get_scale() < scale_before:
+                print(f"SKIPPING THIS BATCH: {batch['ind'].detach().cpu().tolist()}")
             
             train_losses.append(batch['loss'].item())
             train_accs.append(batch['acc_feature_choice'].item())

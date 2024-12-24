@@ -131,6 +131,9 @@ def check_std_channels(data, std_min, std_max):
         return False
     return True
 
+def check_is_silence(data, silence_threshold):
+    return (data.max() < silence_threshold) and (data.min() > -1 * silence_threshold)
+
 def band_pass_brickwall(data, min_freq, max_freq):
     # zero all freqs less then min_freq and more then max_freq, decline from 1 to 0 gradually across "side" samples
     # default slope is 0.5hz, slope's middle is centered at cutoff freq. Slope is done by convolution

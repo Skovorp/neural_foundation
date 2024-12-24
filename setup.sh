@@ -2,9 +2,10 @@ apt update -y
 apt install zip unzip pigz pv -y
 git config --global user.email "peter.skovorodnikov@gmail.com"
 pip install -r <(grep -vE 'torch|numpy' requirements.txt)
-mkdir /root/giant_cache
+# mkdir /root/giant_cache
 cp /workspace/full_clean.zip /root/full_clean.zip
-# cd 
+cd /root
+unzip full_clean.zip
 wandb init
 
 # locally run

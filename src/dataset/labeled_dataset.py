@@ -6,9 +6,10 @@ import pandas as pd
 from scipy.signal import butter, sosfilt
 from tqdm import tqdm
 
-from utils.data_utils import load_recording, calc_percent_clipped, check_std_channels
+from utils.data_utils import load_recording, calc_percent_clipped, check_std_channels, check_is_silence
 from safetensors import safe_open
 from safetensors.torch import save_file
+import multiprocessing
 
 def save_tsr(x, pth):
     save_file(x, pth)
@@ -20,10 +21,11 @@ def load_tsr(pth):
             tensors[k] = f.get_tensor(k)
     return tensors
         
-
+numel = multiprocessing.Value('i', 0)
+lock = multiprocessing.Lock()
 
 class EEGLabeledDataset(Dataset):
-    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, target_config, clipped_threshold, norm_std_range_min=0.01, norm_std_range_max=1.99, limit=None, rebuild_cache=True, **kwargs):
+    def __init__(self, data_path, cache_processed_path, train_length, dataset_mode, target_config, clipped_threshold, norm_std_range_min=0.01, norm_std_range_max=1.99, silence_thresold=1e-10, limit=None, rebuild_cache=True, **kwargs):
         super().__init__()
         self.none_user_id = -100
         self.num_user_ids = None
@@ -39,8 +41,9 @@ class EEGLabeledDataset(Dataset):
         self.norm_std_range_min = norm_std_range_min
         self.norm_std_range_max = norm_std_range_max
         self.clip_val = 1e-4
+        self.silence_thresold = silence_thresold
         
-        assert dataset_mode in ('beginning_from_each', 'intersecting_from_one', 'full'), 'bad dataset_mode'
+        assert dataset_mode in ('beginning_from_each', 'intersecting_from_one', 'full', 'full_mp'), 'bad dataset_mode'
         self.dataset_mode = dataset_mode
         
         if rebuild_cache:
@@ -93,7 +96,7 @@ class EEGLabeledDataset(Dataset):
                 save_tsr(chunk, self.cache_processed_path / f"{i}.pt")
         elif self.dataset_mode == "full":
             numel = 0
-            for i in tqdm(range(len(self.available_filenames)), desc='Chunks from each file without intersection'):
+            for i in tqdm(range(len(self.available_filenames)), desc='Chunks from each file without intersection', smoothing=0):
                 raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[i]) # data is raw eeg numpy array 
                 if raw_data is None:
                     continue
@@ -103,18 +106,64 @@ class EEGLabeledDataset(Dataset):
                     chunk = proc_data[:, start : start + self.train_length]
                     if chunk.shape[1] != self.train_length:
                         break
-                    is_ok = calc_percent_clipped(chunk, self.clip_val) < self.clipped_threshold
-                    is_ok = is_ok and check_std_channels(self.normalize_data(chunk), self.norm_std_range_min, self.norm_std_range_max) 
-                    # this might be MEGA slow, multiprocessing???
-                    if not is_ok:
+                    if not self.is_valid_chunk(chunk):
                         start += self.train_length // 10
                         continue
-                    to_save = {'data': chunk.detach().clone()}
+                    to_save = {'data': chunk.detach().cpu().clone()}
                     to_save = self.get_targets(self.available_filenames[i], start, to_save)
                     save_tsr(to_save, self.cache_processed_path / f"{numel}.pt")
                     start += self.train_length
                     numel += 1
-    
+        # elif self.dataset_mode == "full_mp":
+        #     # self.numel = multiprocessing.Value('i', 0)
+        #     # self.lock = multiprocessing.Lock() 
+            
+        #     print(f"CPU count: {multiprocessing.cpu_count()}")
+        #     # ctx = multiprocessing.get_context('spawn')
+        #     with ctx.Pool(processes=16) as pool:
+        #         list(
+        #             tqdm(
+        #                 pool.imap_unordered(self.process_full_file, range(len(self.available_filenames)), chunksize=64),
+        #                 total=len(self.available_filenames),
+        #                 desc="Processing files"
+        #             )
+                # )
+
+
+    # def process_full_file(self, file_ind):
+    #     global numel, lock
+    #     raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[file_ind])
+    #     if raw_data is None:
+    #         return 
+    #     proc_data = self.process_data(raw_data)
+    #     start = 0
+    #     while True:
+    #         chunk = proc_data[:, start : start + self.train_length]
+    #         if chunk.shape[1] != self.train_length:
+    #             break
+    #         is_ok = calc_percent_clipped(chunk, self.clip_val) < self.clipped_threshold
+    #         is_ok = is_ok and check_std_channels(self.normalize_data(chunk), self.norm_std_range_min, self.norm_std_range_max) 
+    #         if not is_ok:
+    #             start += self.train_length // 10
+    #             continue
+    #         to_save = {'data': chunk.detach().clone()}
+    #         to_save = self.get_targets(self.available_filenames[file_ind], start, to_save)
+    #         with lock:
+    #             current_numel = numel.value
+    #             numel.value += 1
+    #         save_tsr(to_save, self.cache_processed_path / f"{current_numel}.pt")
+    #         start += self.train_length
+        
+    def is_valid_chunk(self, chunk):
+        if calc_percent_clipped(chunk, self.clip_val) >= self.clipped_threshold:
+            return False
+        if check_is_silence(chunk, self.silence_thresold):
+            return False
+        if not check_std_channels(self.normalize_data(chunk), self.norm_std_range_min, self.norm_std_range_max):
+            return False
+        return True
+
+
     def get_cached_ids(self, ):
         # assume cached names are 0.pt, 1.pt 2.pt etc.
         return set([int(x.name[:-3]) for x in self.cache_processed_path.glob('*.pt')]) 
@@ -134,7 +183,7 @@ class EEGLabeledDataset(Dataset):
         sos = butter(3, Wn=[83.3 - 5, 83.3 + 5], btype='bandstop', analog=False, output='sos', fs=250)
         data = sosfilt(sos, data)
         
-        data = torch.tensor(data, dtype=torch.float32)
+        data = torch.tensor(data, dtype=torch.float32).cuda()
         data = data[:, 500:-500]
         
         data = torch.clip(data, -self.clip_val, self.clip_val)
@@ -151,9 +200,13 @@ class EEGLabeledDataset(Dataset):
         return data
     
     def __getitem__(self, index):
+        if index in [38566, 38565, 47309, 47310]:
+            return self.__getitem__(10)
+        
         if index in self.cached_ids:
             r = load_tsr(self.cache_processed_path / f"{index}.pt")
             r['data']= self.normalize_data(r['data'])
+            r['ind'] = index
             return r
         else:
             raise Exception("bad ind")

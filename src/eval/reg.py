@@ -38,9 +38,9 @@ def evaluate_catboost(X: torch.Tensor, y: torch.Tensor, do_norm):
     train_pool = Pool(data=X_train, label=y_train)
     val_pool = Pool(data=X_val, label=y_val)
 
-    model = CatBoostClassifier(task_type='GPU')
+    model = CatBoostClassifier(task_type='GPU', iterations=500, verbose=100)
 
-    model.fit(train_pool, eval_set=val_pool, early_stopping_rounds=50)
+    model.fit(train_pool, early_stopping_rounds=50)
 
     y_val_pred = model.predict(val_pool)
     acc = accuracy_score(y_val, y_val_pred)
