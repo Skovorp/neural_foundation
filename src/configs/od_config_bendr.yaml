@@ -1,21 +1,25 @@
 data_train:
-  data_path: /home/ps5359/data/1k/h5
-  cache_processed_path: /vast/ps5359/1k/cache/
+  data_path: /root/giant_data
+  cache_processed_path: /root/giant_cache/giant_cache
   train_length: 73728 
   dataset_mode: "full"
-  batch_size: 32
+  batch_size: 128 
   rebuild_cache: false
-  limit: 320
+  limit: null
   target_config: 
-    user_id: False
+    user_id: True
     activity: False
   clipped_threshold: 0.3 
+  norm_std_range_min: 0.5
+  norm_std_range_max: 1.5
+  silence_thresold: 1.0e-10
+
 data_val:
-  data_path: /home/ps5359/data/full_clean/h5
-  cache_processed_path: /vast/ps5359/full_clean/cache/
+  data_path: /root/full_clean/h5
+  cache_processed_path: /root/full_clean/cache
   train_length: 73728 
   dataset_mode: "full"
-  batch_size: 64
+  batch_size: 128
   rebuild_cache: false
   limit: null
   target_config: 
@@ -30,7 +34,7 @@ context_network:
   emb_dim: 512
   ffn_dim: 2048
   nhead: 8
-  transformer_num_layers: 3
+  transformer_num_layers: 20
   mask_prob: 0.065
   mask_length: 10
   min_masked: 384
@@ -40,14 +44,17 @@ context_network:
     type: 'sin'
     max_len: 1000
 optimizer:
-  lr: 3.0e-4
+  lr: 1.2e-3
   weight_decay: 0
 scheduler:
   part_warmup_steps: 0.05
 training:
   device: "cuda"
+  mixed_precision: true
+  scaler: true
+  mp_dtype: "torch.float16"
   num_epochs: 200
-  heavy_logs_every: -1
+  heavy_logs_every: 50
 save: 
-  dir: /home/ps5359/checkpoints
-  every: 5
+  dir: /root/checkpoints
+  every: 10

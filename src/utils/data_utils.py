@@ -7,6 +7,7 @@ from torch import stft
 import matplotlib.pyplot as plt 
 from matplotlib.colors import LogNorm
 import PIL
+import traceback
 
 
 
@@ -16,22 +17,30 @@ def load_recording(path_to_h5):
         eeg data: np.array of type np.float32 with shape (4, X)"
         metadata: dict
     """
-    with h5py.File(path_to_h5, "r") as f:
-        assert list(f.keys()) == ['eeg4_datasetName'] or list(f.keys()) == ['eeg4_datasetName', 'ppg1_datasetName'], f"expected structure to be ['eeg4_datasetName'], got {f.keys()}"
-        # ppg1_datasetName is heartrate data that's recorder every 10ms and not 4ms like eeg -- i just ignore it
-        data = f['eeg4_datasetName']
-        data_dtype = np.dtype([('timestamp_name', '<u4'), ('eeg1_name', '<f4'), ('eeg2_name', '<f4'), ('eeg3_name', '<f4'), ('eeg4_name', '<f4')])
-        assert data.dtype == data_dtype, f"expected dtype to be {data_dtype}, got {data.dtype}"
-        # assert (data['timestamp_name'] == np.arange(data.shape[0]) * 4).all(), f"expected timestamp_name to be 0, 4, 8 ... (len(data) - 1) * 4, but got {data['timestamp_name'][:5]}... failed in {(1 * ~(data['timestamp_name'] == np.arange(data.shape[0]) * 4)).sum()} / {data.shape[0]} positions"
-        timestamps = data['timestamp_name'] 
-        final_data = np.vstack([data['eeg1_name'], data['eeg2_name'], data['eeg3_name'], data['eeg4_name']])
-        
-        meta = dict(f['eeg4_datasetName'].attrs.items())
-        assert list(meta.keys()) == ['eeg4_datasetAttribute', 'eeg4_datasetAttributeStartTime'], f"expected metadata to have keys ['eeg4_datasetAttribute', 'eeg4_datasetAttributeStartTime'], got {meta.keys()}"
-        meta['eeg4_datasetAttribute'] = json.loads(meta['eeg4_datasetAttribute'])
-        assert meta['eeg4_datasetAttribute']['channelCount'] == 4, f"expected data to have 4 channels. got {meta['eeg4_datasetAttribute']['channelCount']}"
-        
-        return final_data, timestamps, meta
+    try:
+        path_to_h5 = str(path_to_h5)
+        path_to_h5 = path_to_h5 if path_to_h5[-3:] == ".h5" else path_to_h5 + '.h5'
+        with h5py.File(path_to_h5, "r") as f:
+            assert 'eeg4_datasetName' in list(f.keys()), f"No eeg4_datasetName in h5 keys: {f.keys()}"
+            # ppg1_datasetName is heartrate data that's recorded every 10ms and not 4ms like eeg -- i just ignore it
+            # also can have gyroscope3_datasetName, accelerometer3_datasetName
+            data = f['eeg4_datasetName']
+            data_dtype = np.dtype([('timestamp_name', '<u4'), ('eeg1_name', '<f4'), ('eeg2_name', '<f4'), ('eeg3_name', '<f4'), ('eeg4_name', '<f4')])
+            assert data.dtype == data_dtype, f"expected dtype to be {data_dtype}, got {data.dtype}"
+            # assert (data['timestamp_name'] == np.arange(data.shape[0]) * 4).all(), f"expected timestamp_name to be 0, 4, 8 ... (len(data) - 1) * 4, but got {data['timestamp_name'][:5]}... failed in {(1 * ~(data['timestamp_name'] == np.arange(data.shape[0]) * 4)).sum()} / {data.shape[0]} positions"
+            timestamps = data['timestamp_name'] 
+            final_data = np.vstack([data['eeg1_name'], data['eeg2_name'], data['eeg3_name'], data['eeg4_name']])
+            
+            meta = dict(f['eeg4_datasetName'].attrs.items())
+            assert list(meta.keys()) == ['eeg4_datasetAttribute', 'eeg4_datasetAttributeStartTime'], f"expected metadata to have keys ['eeg4_datasetAttribute', 'eeg4_datasetAttributeStartTime'], got {meta.keys()}"
+            meta['eeg4_datasetAttribute'] = json.loads(meta['eeg4_datasetAttribute'])
+            assert meta['eeg4_datasetAttribute']['channelCount'] == 4, f"expected data to have 4 channels. got {meta['eeg4_datasetAttribute']['channelCount']}"
+            
+            return final_data, timestamps, meta
+    except Exception:
+        traceback.print_exc()
+        print(f"\n!!! Cant open file, skipping: {path_to_h5}")
+        return None, None, None
     
     
 def turn_into_patches(data, chunk_length, chunk_stride):
@@ -105,13 +114,25 @@ def plot_first_n(data, n=1000):
     plt.close()
     return res
 
-def calc_part_clipped(data, clip_val):
+@torch.no_grad()
+def calc_percent_clipped(data, clip_val):
     abs_data = data.abs()
-    max_val = abs_data.max()
-    part_clipped = (abs_data > (max_val - 0.01)).sum().item()
+    part_clipped = (abs_data == clip_val).sum().item() * 100.0
     part_clipped = part_clipped / torch.numel(data)
     return part_clipped
 
+
+def check_std_channels(data, std_min, std_max):
+    # data is (4, datapoints)
+    stds = data.std(axis=1)
+    if stds.isnan().any() or stds.isinf().any():
+        return False
+    if (stds < std_min).any() or (stds > std_max).any():
+        return False
+    return True
+
+def check_is_silence(data, silence_threshold):
+    return (data.max() < silence_threshold) and (data.min() > -1 * silence_threshold)
 
 def band_pass_brickwall(data, min_freq, max_freq):
     # zero all freqs less then min_freq and more then max_freq, decline from 1 to 0 gradually across "side" samples

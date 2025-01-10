@@ -177,3 +177,8 @@ pyrightconfig.json
 */wandb
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+# tensorboard
+*/log
+wandb/
+catboost_info/

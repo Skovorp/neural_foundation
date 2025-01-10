@@ -1,27 +1,15 @@
 data_train:
   data_path: /home/ps5359/data/1k/h5
-  cache_processed_path: /vast/ps5359/1k/cache/
-  train_length: 73728 
-  dataset_mode: "full"
-  batch_size: 32
-  rebuild_cache: false
-  limit: 320
-  target_config: 
-    user_id: False
-    activity: False
-  clipped_threshold: 0.3 
-data_val:
-  data_path: /home/ps5359/data/full_clean/h5
-  cache_processed_path: /vast/ps5359/full_clean/cache/
+  cache_processed_path: /vast/ps5359/test_cache_1k/cache/
   train_length: 73728 
   dataset_mode: "full"
   batch_size: 64
   rebuild_cache: false
-  limit: null
+  limit: 3200
   target_config: 
-    user_id: True
+    user_id: False
     activity: False
-  clipped_threshold: 100
+  clipped_threshold: 0.3 
 encoder:
   # inp_size: 1000 # 4 * 500
   emb_dim: 512
@@ -46,8 +34,4 @@ scheduler:
   part_warmup_steps: 0.05
 training:
   device: "cuda"
-  num_epochs: 200
-  heavy_logs_every: -1
-save: 
-  dir: /home/ps5359/checkpoints
-  every: 5
+  num_epochs: 3
