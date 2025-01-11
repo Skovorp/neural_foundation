@@ -45,3 +45,71 @@ def evaluate_catboost(X: torch.Tensor, y: torch.Tensor, do_norm):
     y_val_pred = model.predict(val_pool)
     acc = accuracy_score(y_val, y_val_pred)
     return acc
+
+from sklearn.model_selection import KFold
+from sklearn.metrics import accuracy_score
+from catboost import CatBoostClassifier, Pool
+import torch
+
+
+def evaluate_catboost_cv(X: torch.Tensor, y: torch.Tensor, num_steps: int):
+    # Convert PyTorch tensors to numpy arrays
+    X_np = X.numpy()
+    y_np = y.numpy()
+
+    # Initialize K-Fold cross-validation with 3 folds
+    kf = KFold(n_splits=3, shuffle=True, random_state=42)
+
+    accuracies = []
+
+    # Perform cross-validation
+    for fold, (train_idx, val_idx) in enumerate(kf.split(X_np)):
+        X_train, X_val = X_np[train_idx], X_np[val_idx]
+        y_train, y_val = y_np[train_idx], y_np[val_idx]
+
+        # Create CatBoost pools for training and validation
+        train_pool = Pool(data=X_train, label=y_train)
+        val_pool = Pool(data=X_val, label=y_val)
+
+        # Initialize CatBoost model with configurable number of iterations
+        model = CatBoostClassifier(task_type='GPU', iterations=num_steps, verbose=100)
+
+        # Train the model
+        model.fit(train_pool, early_stopping_rounds=50)
+
+        # Predict and calculate accuracy for the current fold
+        y_val_pred = model.predict(val_pool)
+        acc = accuracy_score(y_val, y_val_pred)
+        accuracies.append(acc)
+
+        print(f"Fold {fold + 1} Accuracy: {acc:.4f}")
+
+    # Calculate and print the mean accuracy across folds
+    mean_acc = sum(accuracies) / len(accuracies)
+    print(f"Mean Accuracy: {mean_acc:.4f}")
+
+    return mean_acc
+
+
+def fft_extract_features(timeseries):
+    """
+    Performs FFT on the time series data and extracts frequency features.
+    
+    Args:
+        timeseries (torch.Tensor): Input tensor of shape (batch_size, channels, time).
+    
+    Returns:
+        torch.Tensor: Output tensor of shape (batch_size, 512) with frequency features.
+    """
+    batch_size, channels, time = timeseries.shape
+    fft_result = torch.fft.rfft(timeseries, dim=-1)
+    magnitude = torch.abs(fft_result)
+
+    freq_features = torch.nn.functional.interpolate(
+        magnitude,
+        size=1024,  # Target size per channel
+        mode="linear",
+        align_corners=False
+    )   # Shape: (batch_size, channels, 128)
+    flattened_features = freq_features.view(batch_size, -1)  # Shape: (batch_size, channels * 128)
+    return flattened_features
