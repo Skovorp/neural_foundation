@@ -52,13 +52,13 @@ from catboost import CatBoostClassifier, Pool
 import torch
 
 
-def evaluate_catboost_cv(X: torch.Tensor, y: torch.Tensor, num_steps: int):
+def evaluate_catboost_cv(X: torch.Tensor, y: torch.Tensor, num_steps: int, num_folds: int):
     # Convert PyTorch tensors to numpy arrays
     X_np = X.numpy()
     y_np = y.numpy()
 
     # Initialize K-Fold cross-validation with 3 folds
-    kf = KFold(n_splits=3, shuffle=True, random_state=42)
+    kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
 
     accuracies = []
 
