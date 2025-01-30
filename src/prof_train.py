@@ -1,19 +1,13 @@
 from dataset.labeled_dataset import EEGLabeledDataset
-from models.bendr import EncoderConv, ContextNetwork, calc_loss_proper
-from utils.training_utils import emb_std, emb_mean, warn_one_batch, info_about_training, plot_pca, plot_sim_image, mn
+from models.bendr import EncoderConv, ContextNetwork
+from loss.loss_bendr import calc_loss_effective, calc_loss_proper
 
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import SequentialLR, LinearLR
 import torch
 import yaml
 from tqdm import tqdm
-import wandb
 import numpy as np
-from datetime import datetime
-import os
-
-# import lovely_tensors as lt
-# lt.monkey_patch()
+import time
 
 import warnings
 warnings.filterwarnings('ignore', message='Lazy modules.*')
@@ -24,15 +18,9 @@ warnings.filterwarnings('ignore', message='.*You are using `torch.load`.*')
 # fix random seeds for reproducibility
 SEED = 456
 torch.manual_seed(SEED)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-torch.backends.cuda.enable_mem_efficient_sdp(True)
-torch.backends.cuda.enable_math_sdp(False)
-torch.backends.cuda.enable_flash_sdp(False) # Need H1
+torch.backends.cudnn.benchmark = True
 np.random.seed(SEED)
 
-# from torch.profiler import profile, record_function, ProfilerActivity
-import time
 
 if __name__ == "__main__":
     with open('configs/prof.yaml', 'r') as file:
@@ -58,37 +46,40 @@ if __name__ == "__main__":
         **cfg['optimizer']
     )
     
-
+    scaler = torch.amp.GradScaler(enabled=cfg["training"]["scaler"], init_scale=2. ** 18)
+    
     encoder.train()
     context_network.train()
     
+    iteration_times = []
     with torch.profiler.profile(
             schedule=torch.profiler.schedule(wait=3, warmup=5, active=3, repeat=1),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/prof_run'),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler('./log_mask_smart_b64_20l_flashfp16_loss_eff'),
             record_shapes=True,
             profile_memory=True,
             with_stack=True
     ) as prof:
         for batch_idx, batch in enumerate(train_loader):
-            prof.step()
-            if batch_idx > ((3 + 5 + 3) * 2):
-                break
+            with torch.autocast(
+                device_type=cfg["training"]['device'], enabled=cfg["training"]["mixed_precision"],
+                dtype=eval(cfg["training"]["mp_dtype"])
+            ):
+                prof.step()
+                if batch_idx >= ((3 + 5 + 3) * 1):
+                    break
+                start_time = time.time()
 
-            optimizer.zero_grad(set_to_none=True)
-            batch['data'] = batch['data'].to(device, dtype=torch.float32, non_blocking=True)
-            
-            batch = encoder(batch)
-            batch = context_network(batch)
-            batch = calc_loss_proper(batch, cfg['context_network']['temp'],  cfg['context_network']['num_negatives'])
-            batch['loss'].backward()
-            optimizer.step()
-            
-            
-# pin memory  - D 
-# больше батч - D
-# non blocking? в to? - D
-# синк в маске похуй
-# откуда синк в начальном переносе - мб с пином станет лучше
-# bfloat полный со скейлингом
-# и сделай модель больше
-# channel first?
+                optimizer.zero_grad(set_to_none=True)
+                batch['data'] = batch['data'].to(device, non_blocking=True)
+                
+                batch = encoder(batch)
+                batch = context_network(batch)
+                # batch = calc_loss_proper(batch, cfg['context_network']['temp'],  cfg['context_network']['num_negatives'])
+                batch = calc_loss_effective(batch, cfg['context_network']['temp'])
+                
+            scaler.scale(batch['loss']).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            iteration_times.append(time.time() - start_time)
+    print(f"Single iteration takes {sum(iteration_times[-3:]) * 1000 / 3:.2f}ms")
+    print(f"Maximum GPU memory recorded per step: {torch.cuda.max_memory_allocated() / (1024 ** 2):.2f} MB")
