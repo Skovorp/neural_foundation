@@ -43,12 +43,18 @@ class EEGLabeledDataset(Dataset):
         self.clip_val = 1e-4
         self.silence_thresold = silence_thresold
         
-        assert dataset_mode in ('beginning_from_each', 'intersecting_from_one', 'full', 'full_mp'), 'bad dataset_mode'
+        assert dataset_mode in ('beginning_from_each', 'sequential', 'intersecting_from_one', 'full'), 'bad dataset_mode'
         self.dataset_mode = dataset_mode
         
         if rebuild_cache:
             [f.unlink() for f in self.cache_processed_path.glob("*")] 
         
+        self.activity_cache = {}
+        self.song_to_id = None
+        if self.target_config['activity']:
+            df = pd.read_csv(self.data_dir / self.metadata.iloc[0]['filename_music_meta'])
+            self.song_to_id =  {song: ind + 1 for ind, song in enumerate(sorted(df['Theme']))}
+                    
         self.cached_ids = self.get_cached_ids()
         if len(self.cached_ids) == 0:
             print("Building cache...")
@@ -57,24 +63,44 @@ class EEGLabeledDataset(Dataset):
             
         if limit is not None:
             self.cached_ids = set(list(self.cached_ids)[:limit])
-            
+
+
     def prepare_metadata(self, ):
         if self.metadata is None:
             return
-
         user_ids = {serial: idx for idx, serial in enumerate(self.metadata['filename_h5'].dropna().unique())}
         self.num_user_ids = len(user_ids)
         self.metadata['user_id'] = self.metadata['filename_h5'].map(user_ids).fillna(self.none_user_id)
         
             
-            
-    def get_targets(self, fn, start_ind, save_dict):
+    def get_targets(self, fn, chunk_start_ind, save_dict):
         assert self.metadata is not None
         row = self.metadata[self.metadata['filename_h5'] == fn].iloc[0]
         if self.target_config['user_id']:
             save_dict['user_id'] = torch.tensor(row['user_id'])
         if self.target_config['activity']:
-            save_dict['activity'] = torch.zeros(768) # Placeholder for now, dont forget that process_data cuts some points from ends
+            if self.activity_cache.get(fn) is None:
+                df = pd.read_csv(self.data_dir / row['filename_music_meta'])
+                
+                song_ids = torch.zeros(row['shape'], dtype=int) * -1
+                is_liked = torch.zeros(row['shape'], dtype=int) * -1
+                for _, meta_row in df.iterrows():
+                    
+                    start_ind = int((meta_row['Song_start_time'] - row['start_timestamp']) // 0.004)
+                    end_ind = int((meta_row['Song_end_time'] - row['start_timestamp']) // 0.004) # 0.004 = 1 / 250
+                    song_ids[start_ind : end_ind] = self.song_to_id[meta_row['Theme']]
+                    is_liked[start_ind : end_ind] = 1 if meta_row['Valence'] >= 3 else 2
+                
+                self.activity_cache[fn] = {
+                    'song_ids': song_ids[500:-500],
+                    'is_liked': is_liked[500:-500],
+                }
+            
+            song_ids = self.activity_cache[fn]['song_ids'][chunk_start_ind : chunk_start_ind + self.train_length]
+            is_liked = self.activity_cache[fn]['is_liked'][chunk_start_ind : chunk_start_ind + self.train_length]
+            
+            save_dict['song_ids'] = song_ids.view(768, 96).mode(1).values
+            save_dict['is_liked'] = is_liked.view(768, 96).mode(1).values
         return save_dict
          
     def prepare_cache(self, ):
@@ -86,14 +112,25 @@ class EEGLabeledDataset(Dataset):
                 proc_data = self.process_data(raw_data)
                 proc_data = proc_data[:, :self.train_length]
                 save_tsr(proc_data, self.cache_processed_path / f"{i}.pt")
-        elif self.dataset_mode == "intersecting_from_one":
-            assert not self.compute_targets
-            raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[0])
-            proc_data = self.process_data(raw_data)
-            for i in tqdm(range(40), desc="40 chunks from 100min of first file"):
-                start = (self.train_length // 2) * i
-                chunk = proc_data[:, start : start + self.train_length]
-                save_tsr(chunk, self.cache_processed_path / f"{i}.pt")
+        elif self.dataset_mode == "sequential":
+            numel = 0
+            for i in tqdm(range(len(self.available_filenames)), desc='One chunk from each file'):
+                raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[i])
+                proc_data = self.process_data(raw_data)
+                start = 0
+                while True:
+                    chunk = proc_data[:, start : start + self.train_length]
+                    if chunk.shape[1] != self.train_length:
+                        print(f"Skipping last {chunk.shape[1]}")
+                        break
+                    if not self.is_valid_chunk(chunk):
+                        print("invalid chunk, still using it")
+                    to_save = {'data': chunk.detach().cpu().clone()}
+                    to_save = self.get_targets(self.available_filenames[i], start, to_save)
+                    save_tsr(to_save, self.cache_processed_path / f"{numel}.pt")
+                    start += self.train_length
+                    numel += 1
+                
         elif self.dataset_mode == "full":
             numel = 0
             for i in tqdm(range(len(self.available_filenames)), desc='Chunks from each file without intersection', smoothing=0):
@@ -114,45 +151,6 @@ class EEGLabeledDataset(Dataset):
                     save_tsr(to_save, self.cache_processed_path / f"{numel}.pt")
                     start += self.train_length
                     numel += 1
-        # elif self.dataset_mode == "full_mp":
-        #     # self.numel = multiprocessing.Value('i', 0)
-        #     # self.lock = multiprocessing.Lock() 
-            
-        #     print(f"CPU count: {multiprocessing.cpu_count()}")
-        #     # ctx = multiprocessing.get_context('spawn')
-        #     with ctx.Pool(processes=16) as pool:
-        #         list(
-        #             tqdm(
-        #                 pool.imap_unordered(self.process_full_file, range(len(self.available_filenames)), chunksize=64),
-        #                 total=len(self.available_filenames),
-        #                 desc="Processing files"
-        #             )
-                # )
-
-
-    # def process_full_file(self, file_ind):
-    #     global numel, lock
-    #     raw_data, _, _ = load_recording(self.data_dir / self.available_filenames[file_ind])
-    #     if raw_data is None:
-    #         return 
-    #     proc_data = self.process_data(raw_data)
-    #     start = 0
-    #     while True:
-    #         chunk = proc_data[:, start : start + self.train_length]
-    #         if chunk.shape[1] != self.train_length:
-    #             break
-    #         is_ok = calc_percent_clipped(chunk, self.clip_val) < self.clipped_threshold
-    #         is_ok = is_ok and check_std_channels(self.normalize_data(chunk), self.norm_std_range_min, self.norm_std_range_max) 
-    #         if not is_ok:
-    #             start += self.train_length // 10
-    #             continue
-    #         to_save = {'data': chunk.detach().clone()}
-    #         to_save = self.get_targets(self.available_filenames[file_ind], start, to_save)
-    #         with lock:
-    #             current_numel = numel.value
-    #             numel.value += 1
-    #         save_tsr(to_save, self.cache_processed_path / f"{current_numel}.pt")
-    #         start += self.train_length
         
     def is_valid_chunk(self, chunk):
         if calc_percent_clipped(chunk, self.clip_val) >= self.clipped_threshold:
@@ -199,10 +197,7 @@ class EEGLabeledDataset(Dataset):
         data = data / ((data ** 2).mean() ** 0.5)
         return data
     
-    def __getitem__(self, index):
-        if index in [38566, 38565, 47309, 47310]:
-            return self.__getitem__(10)
-        
+    def __getitem__(self, index):        
         if index in self.cached_ids:
             r = load_tsr(self.cache_processed_path / f"{index}.pt")
             r['data']= self.normalize_data(r['data'])
